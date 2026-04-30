@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	mlopsv1alpha1 "github.com/your-org/mlflow-k8s-operator/api/v1alpha1"
+	mlopsv1alpha1 "github.com/NotHarshhaa/mlflow-k8s-operator/api/v1alpha1"
 )
 
 // MLflowServerReconciler reconciles a MLflowServer object
@@ -27,9 +27,9 @@ type MLflowServerReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=mlops.your-org.io,resources=mlflowservers,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=mlops.your-org.io,resources=mlflowservers/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=mlops.your-org.io,resources=mlflowservers/finalizers,verbs=update
+// +kubebuilder:rbac:groups=mlops.NotHarshhaa.io,resources=mlflowservers,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=mlops.NotHarshhaa.io,resources=mlflowservers/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=mlops.NotHarshhaa.io,resources=mlflowservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete

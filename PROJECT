@@ -1,6 +1,6 @@
 version: "3"
-domain: mlops.your-org.io
-repo: github.com/your-org/mlflow-k8s-operator
+domain: mlops.NotHarshhaa.io
+repo: github.com/NotHarshhaa/mlflow-k8s-operator
 resources:
 - group: mlops
   kind: MLflowServer

@@ -9,9 +9,9 @@ keywords:
   - mlops
   - operator
   - kubernetes
-home: https://github.com/your-org/mlflow-k8s-operator
+home: https://github.com/NotHarshhaa/mlflow-k8s-operator
 sources:
-  - https://github.com/your-org/mlflow-k8s-operator
+  - https://github.com/NotHarshhaa/mlflow-k8s-operator
 maintainers:
   - name: Your Name
     email: your-email@example.com

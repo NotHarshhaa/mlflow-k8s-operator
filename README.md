@@ -35,7 +35,7 @@ Every team doing ML on Kubernetes ends up manually deploying MLflow — writing 
 ### Install the operator
 
 ```bash
-helm repo add mlflow-k8s-operator https://your-org.github.io/mlflow-k8s-operator
+helm repo add mlflow-k8s-operator https://NotHarshhaa.github.io/mlflow-k8s-operator
 helm install mlflow-operator mlflow-k8s-operator/mlflow-k8s-operator \
   --namespace mlflow-system \
   --create-namespace
@@ -45,7 +45,7 @@ helm install mlflow-operator mlflow-k8s-operator/mlflow-k8s-operator \
 
 ```yaml
 # mlflow-server.yaml
-apiVersion: mlops.your-org.io/v1alpha1
+apiVersion: mlops.NotHarshhaa.io/v1alpha1
 kind: MLflowServer
 metadata:
   name: team-alpha-mlflow
@@ -258,7 +258,7 @@ The operator performs a rolling update — new pods come up before old ones are 
 Prerequisites: `go 1.21+`, `kubectl`, `kind` or `k3d`, `operator-sdk`
 
 ```bash
-git clone https://github.com/your-org/mlflow-k8s-operator
+git clone https://github.com/NotHarshhaa/mlflow-k8s-operator
 cd mlflow-k8s-operator
 
 # spin up a local cluster

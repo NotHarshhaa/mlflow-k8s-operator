@@ -4,7 +4,7 @@ metadata:
   name: mlflow-k8s-operator-manager-role
 rules:
 - apiGroups:
-  - mlops.your-org.io
+  - mlops.NotHarshhaa.io
   resources:
   - mlflowservers
   verbs:
@@ -16,13 +16,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - mlops.your-org.io
+  - mlops.NotHarshhaa.io
   resources:
   - mlflowservers/finalizers
   verbs:
   - update
 - apiGroups:
-  - mlops.your-org.io
+  - mlops.NotHarshhaa.io
   resources:
   - mlflowservers/status
   verbs:

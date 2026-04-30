@@ -1,4 +1,4 @@
-apiVersion: mlops.your-org.io/v1alpha1
+apiVersion: mlops.NotHarshhaa.io/v1alpha1
 kind: MLflowServer
 metadata:
   name: mlflow-local

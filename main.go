@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -12,12 +11,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	"sigs.k8s.io/controller-runtime/pkg/metrics"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	mlopsv1alpha1 "github.com/your-org/mlflow-k8s-operator/api/v1alpha1"
-	"github.com/your-org/mlflow-k8s-operator/controllers"
-	"github.com/your-org/mlflow-k8s-operator/internal/metrics"
+	mlopsv1alpha1 "github.com/NotHarshhaa/mlflow-k8s-operator/api/v1alpha1"
+	"github.com/NotHarshhaa/mlflow-k8s-operator/controllers"
+	custommetrics "github.com/NotHarshhaa/mlflow-k8s-operator/internal/metrics"
 )
 
 var (
@@ -45,15 +42,13 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
 	// Register custom metrics
-	metrics.RegisterCustomMetrics(metrics.Registry)
+	custommetrics.RegisterCustomMetrics(custommetrics.Registry)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
-		MetricsBindAddress:     metricsAddr,
-		Port:                   9443,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "mlflow-k8s-operator.your-org.io",
+		LeaderElectionID:       "mlflow-k8s-operator.NotHarshhaa.io",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

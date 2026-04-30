@@ -21,7 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	mlflowv1alpha1 "github.com/your-org/mlflow-k8s-operator/api/v1alpha1"
+	mlflowv1alpha1 "github.com/NotHarshhaa/mlflow-k8s-operator/api/v1alpha1"
 )
 
 var (

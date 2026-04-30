@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/NotHarshhaa/mlflow-k8s-operator/api/v1alpha1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/your-org/mlflow-k8s-operator/api/v1alpha1"
 	"k8s.io/utils/ptr"
 
 	corev1 "k8s.io/api/core/v1"
