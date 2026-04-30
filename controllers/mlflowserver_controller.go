@@ -51,8 +51,39 @@ func (r *MLflowServerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	// Handle deletion
+	if !mlflowServer.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, mlflowServer)
+	}
+
+	// Add finalizer if not present
+	if !controllerutil.ContainsFinalizer(mlflowServer, mlopsv1alpha1.MLflowServerFinalizer) {
+		controllerutil.AddFinalizer(mlflowServer, mlopsv1alpha1.MLflowServerFinalizer)
+		if err := r.Update(ctx, mlflowServer); err != nil {
+			logger.Error(err, "Failed to add finalizer")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	// Update observed generation
 	mlflowServer.Status.ObservedGeneration = mlflowServer.Generation
+
+	// Validate secrets before reconciliation
+	if err := r.validateSecrets(ctx, mlflowServer); err != nil {
+		logger.Error(err, "Secret validation failed")
+		mlflowServer.SetCondition(metav1.Condition{
+			Type:               mlopsv1alpha1.ConditionReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "SecretValidationFailed",
+			Message:            err.Error(),
+			LastTransitionTime: metav1.Now(),
+		})
+		if err := r.Status().Update(ctx, mlflowServer); err != nil {
+			logger.Error(err, "Failed to update status")
+		}
+		return ctrl.Result{}, err
+	}
 
 	// Reconcile ConfigMap
 	if err := r.reconcileConfigMap(ctx, mlflowServer); err != nil {
@@ -90,6 +121,95 @@ func (r *MLflowServerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.updateStatus(ctx, mlflowServer); err != nil {
 		logger.Error(err, "Failed to update status")
 		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// validateSecrets validates that all required secrets exist and contain required keys
+func (r *MLflowServerReconciler) validateSecrets(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+
+	// Validate backend database secrets
+	switch mlflowServer.Spec.Backend.Type {
+	case mlopsv1alpha1.BackendTypePostgreSQL:
+		cfg := mlflowServer.Spec.Backend.PostgreSQL
+		if cfg != nil {
+			if err := r.validateSecretKeys(ctx, mlflowServer.Namespace, cfg.CredentialsSecret, []string{"username", "password"}); err != nil {
+				return fmt.Errorf("PostgreSQL secret validation failed: %w", err)
+			}
+		}
+	case mlopsv1alpha1.BackendTypeMySQL:
+		cfg := mlflowServer.Spec.Backend.MySQL
+		if cfg != nil {
+			if err := r.validateSecretKeys(ctx, mlflowServer.Namespace, cfg.CredentialsSecret, []string{"username", "password"}); err != nil {
+				return fmt.Errorf("MySQL secret validation failed: %w", err)
+			}
+		}
+	}
+
+	// Validate artifact store secrets
+	switch mlflowServer.Spec.ArtifactStore.Type {
+	case mlopsv1alpha1.ArtifactStoreTypeS3:
+		cfg := mlflowServer.Spec.ArtifactStore.S3
+		if cfg != nil {
+			if err := r.validateSecretKeys(ctx, mlflowServer.Namespace, cfg.CredentialsSecret, []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}); err != nil {
+				return fmt.Errorf("S3 secret validation failed: %w", err)
+			}
+		}
+	case mlopsv1alpha1.ArtifactStoreTypeGCS:
+		cfg := mlflowServer.Spec.ArtifactStore.GCS
+		if cfg != nil {
+			if err := r.validateSecretKeys(ctx, mlflowServer.Namespace, cfg.CredentialsSecret, []string{"service-account.json"}); err != nil {
+				return fmt.Errorf("GCS secret validation failed: %w", err)
+			}
+		}
+	case mlopsv1alpha1.ArtifactStoreTypeAzure:
+		cfg := mlflowServer.Spec.ArtifactStore.Azure
+		if cfg != nil {
+			if err := r.validateSecretKeys(ctx, mlflowServer.Namespace, cfg.CredentialsSecret, []string{"account-name", "account-key"}); err != nil {
+				return fmt.Errorf("Azure secret validation failed: %w", err)
+			}
+		}
+	}
+
+	logger.Info("Secret validation passed")
+	return nil
+}
+
+// validateSecretKeys validates that a secret exists and contains the required keys
+func (r *MLflowServerReconciler) validateSecretKeys(ctx context.Context, namespace, secretName string, requiredKeys []string) error {
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("secret %s not found in namespace %s", secretName, namespace)
+		}
+		return fmt.Errorf("failed to get secret %s: %w", secretName, err)
+	}
+
+	// Check for required keys
+	for _, key := range requiredKeys {
+		if _, exists := secret.Data[key]; !exists {
+			return fmt.Errorf("secret %s is missing required key: %s", secretName, key)
+		}
+	}
+
+	return nil
+}
+
+// handleDeletion handles the deletion of MLflowServer resources
+func (r *MLflowServerReconciler) handleDeletion(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Remove finalizer if cleanup is complete
+	if controllerutil.ContainsFinalizer(mlflowServer, mlopsv1alpha1.MLflowServerFinalizer) {
+		controllerutil.RemoveFinalizer(mlflowServer, mlopsv1alpha1.MLflowServerFinalizer)
+		if err := r.Update(ctx, mlflowServer); err != nil {
+			logger.Error(err, "Failed to remove finalizer")
+			return ctrl.Result{}, err
+		}
+		logger.Info("Finalizer removed successfully")
 	}
 
 	return ctrl.Result{}, nil
@@ -159,7 +279,8 @@ func (r *MLflowServerReconciler) buildBackendURI(mlflowServer *mlopsv1alpha1.MLf
 		if database == "" {
 			database = "mlflow"
 		}
-		return fmt.Sprintf("postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@%s:%d/%s", cfg.Host, port, database)
+		// Use environment variable substitution at runtime instead of exposing in ConfigMap
+		return fmt.Sprintf("postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@%s:%d/%s", cfg.Host, port, database)
 
 	case mlopsv1alpha1.BackendTypeMySQL:
 		cfg := mlflowServer.Spec.Backend.MySQL
@@ -174,7 +295,8 @@ func (r *MLflowServerReconciler) buildBackendURI(mlflowServer *mlopsv1alpha1.MLf
 		if database == "" {
 			database = "mlflow"
 		}
-		return fmt.Sprintf("mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@%s:%d/%s", cfg.Host, port, database)
+		// Use environment variable substitution at runtime instead of exposing in ConfigMap
+		return fmt.Sprintf("mysql://$(MYSQL_USER):$(MYSQL_PASSWORD)@%s:%d/%s", cfg.Host, port, database)
 
 	case mlopsv1alpha1.BackendTypeSQLite:
 		return "sqlite:////mlflow/mlflow.db"
@@ -382,6 +504,26 @@ func (r *MLflowServerReconciler) buildDeployment(mlflowServer *mlopsv1alpha1.MLf
 		})
 	}
 
+	// Add GCS secret volume if using GCS artifact store
+	if mlflowServer.Spec.ArtifactStore.Type == mlopsv1alpha1.ArtifactStoreTypeGCS {
+		cfg := mlflowServer.Spec.ArtifactStore.GCS
+		if cfg != nil && cfg.CredentialsSecret != "" {
+			volumes = append(volumes, corev1.Volume{
+				Name: "gcs-credentials",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: cfg.CredentialsSecret,
+					},
+				},
+			})
+			volumeMounts = append(volumeMounts, corev1.VolumeMount{
+				Name:      "gcs-credentials",
+				MountPath: "/var/secrets/google",
+				ReadOnly:  true,
+			})
+		}
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      mlflowServer.Name,
@@ -398,6 +540,14 @@ func (r *MLflowServerReconciler) buildDeployment(mlflowServer *mlopsv1alpha1.MLf
 					Labels: r.getLabels(mlflowServer),
 				},
 				Spec: corev1.PodSpec{
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: boolPtr(true),
+						RunAsUser:    int64Ptr(1000),
+						FSGroup:      int64Ptr(1000),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:            "mlflow",
@@ -405,8 +555,20 @@ func (r *MLflowServerReconciler) buildDeployment(mlflowServer *mlopsv1alpha1.MLf
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							Args:            []string{"server", "--host", "0.0.0.0", "--port", "5000"},
 							Env:             env,
-							VolumeMounts:    volumeMounts,
-							Resources:       mlflowServer.Spec.Tracking.Resources,
+							VolumeMounts: append(volumeMounts, corev1.VolumeMount{
+								Name:      "tmp",
+								MountPath: "/tmp",
+							}),
+							Resources: mlflowServer.Spec.Tracking.Resources,
+							SecurityContext: &corev1.SecurityContext{
+								AllowPrivilegeEscalation: boolPtr(false),
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
+								ReadOnlyRootFilesystem: boolPtr(true),
+								RunAsNonRoot:           boolPtr(true),
+								RunAsUser:              int64Ptr(1000),
+							},
 							Ports: []corev1.ContainerPort{
 								{
 									ContainerPort: 5000,
@@ -435,7 +597,12 @@ func (r *MLflowServerReconciler) buildDeployment(mlflowServer *mlopsv1alpha1.MLf
 							},
 						},
 					},
-					Volumes: volumes,
+					Volumes: append(volumes, corev1.Volume{
+						Name: "tmp",
+						VolumeSource: corev1.VolumeSource{
+							EmptyDir: &corev1.EmptyDirVolumeSource{},
+						},
+					}),
 				},
 			},
 		},
@@ -794,3 +961,12 @@ func (r *MLflowServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 var (
 	pathTypePrefix = networkingv1.PathTypePrefix
 )
+
+// Helper functions for pointer conversions
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+func int64Ptr(i int64) *int64 {
+	return &i
+}

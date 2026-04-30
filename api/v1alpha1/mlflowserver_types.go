@@ -63,40 +63,55 @@ const (
 // PostgreSQLConfig defines PostgreSQL connection configuration
 type PostgreSQLConfig struct {
 	// Host is the PostgreSQL server hostname
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$`
 	Host string `json:"host"`
 
 	// Port is the PostgreSQL server port
 	// +kubebuilder:default=5432
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port,omitempty"`
 
 	// Database is the database name
 	// +kubebuilder:default=mlflow
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z][a-zA-Z0-9_]*$`
 	Database string `json:"database,omitempty"`
 
 	// CredentialsSecret is the name of the secret containing database credentials
 	// Required keys: username, password
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	CredentialsSecret string `json:"credentialsSecret"`
 
 	// SSLMode is the SSL mode for the connection
 	// +kubebuilder:default=require
+	// +kubebuilder:validation:Enum=disable;allow;prefer;require;verify-ca;verify-full
 	SSLMode string `json:"sslMode,omitempty"`
 }
 
 // MySQLConfig defines MySQL connection configuration
 type MySQLConfig struct {
 	// Host is the MySQL server hostname
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$`
 	Host string `json:"host"`
 
 	// Port is the MySQL server port
 	// +kubebuilder:default=3306
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port,omitempty"`
 
 	// Database is the database name
 	// +kubebuilder:default=mlflow
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z][a-zA-Z0-9_]*$`
 	Database string `json:"database,omitempty"`
 
 	// CredentialsSecret is the name of the secret containing database credentials
 	// Required keys: username, password
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	CredentialsSecret string `json:"credentialsSecret"`
 }
 
@@ -138,42 +153,60 @@ const (
 // S3Config defines S3 artifact store configuration
 type S3Config struct {
 	// Bucket is the S3 bucket name
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9\.\-]{1,61}[a-z0-9]$`
 	Bucket string `json:"bucket"`
 
 	// Region is the AWS region
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z]{2}-[a-z]+-\d{1}$`
 	Region string `json:"region"`
 
 	// CredentialsSecret is the name of the secret containing AWS credentials
 	// Required keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	CredentialsSecret string `json:"credentialsSecret"`
 
 	// PathPrefix is an optional prefix for artifact paths
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9_\-/]*$`
 	PathPrefix string `json:"pathPrefix,omitempty"`
 
 	// EndpointURL is an optional custom S3 endpoint (for MinIO or other S3-compatible storage)
+	// +kubebuilder:validation:Pattern=`^https?://[a-zA-Z0-9\.\-]+(:[0-9]+)?(/.*)?$`
 	EndpointURL string `json:"endpointURL,omitempty"`
 }
 
 // GCSConfig defines GCS artifact store configuration
 type GCSConfig struct {
 	// Bucket is the GCS bucket name
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9\.\-]{1,61}[a-z0-9]$`
 	Bucket string `json:"bucket"`
 
 	// CredentialsSecret is the name of the secret containing GCP service account key
 	// Required key: service-account.json
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	CredentialsSecret string `json:"credentialsSecret"`
 }
 
 // AzureConfig defines Azure Blob storage configuration
 type AzureConfig struct {
 	// StorageAccount is the Azure storage account name
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]{3,24}$`
 	StorageAccount string `json:"storageAccount"`
 
 	// Container is the blob container name
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9\-]*$`
 	Container string `json:"container"`
 
 	// CredentialsSecret is the name of the secret containing Azure storage credentials
 	// Required keys: account-name, account-key
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	CredentialsSecret string `json:"credentialsSecret"`
 }
 
@@ -198,12 +231,14 @@ type IngressConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 
 	// Host is the hostname for the MLflow UI
+	// +kubebuilder:validation:Pattern=`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$`
 	Host string `json:"host,omitempty"`
 
 	// TLS configuration
 	TLS *TLSConfig `json:"tls,omitempty"`
 
 	// IngressClassName is the ingress class name
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
 	IngressClassName string `json:"ingressClassName,omitempty"`
 
 	// Annotations are additional annotations for the Ingress resource
@@ -283,6 +318,9 @@ const (
 
 	// ConditionUpgrading indicates a version upgrade is in progress
 	ConditionUpgrading = "Upgrading"
+
+	// MLflowServerFinalizer is the finalizer for MLflowServer resources
+	MLflowServerFinalizer = "mlflowservers.mlops.NotHarshhaa.io/finalizer"
 )
 
 // SetCondition sets a condition on the MLflowServer status

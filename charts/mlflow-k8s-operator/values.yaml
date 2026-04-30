@@ -24,16 +24,22 @@ serviceAccount:
 
 podAnnotations: {}
 
-podSecurityContext: {}
-  # fsGroup: 2000
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
 
-securityContext: {}
-  # capabilities:
-  #   drop:
-  #   - ALL
-  # readOnlyRootFilesystem: true
-  # runAsNonRoot: true
-  # runAsUser: 1000
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
 
 service:
   type: ClusterIP
@@ -41,17 +47,13 @@ service:
   metricsPort: 8080
   healthPort: 8081
 
-resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  # limits:
-  #   cpu: 500m
-  #   memory: 512Mi
-  # requests:
-  #   cpu: 250m
-  #   memory: 256Mi
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
 
 autoscaling:
   enabled: false
@@ -70,6 +72,22 @@ affinity: {}
 multitenancy:
   enabled: false
   allowedNamespaces: []
+
+# Network policy configuration
+networkPolicy:
+  enabled: false
+  # Additional egress rules
+  egress: []
+
+# Webhook configuration
+webhook:
+  enabled: false
+
+# Pod Disruption Budget configuration
+podDisruptionBudget:
+  enabled: false
+  # minAvailable: 1
+  # maxUnavailable: 1
 
 # Controller configuration
 controller:
