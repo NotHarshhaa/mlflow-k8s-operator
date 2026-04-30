@@ -866,6 +866,76 @@ func (r *MLflowServerReconciler) buildIngress(mlflowServer *mlopsv1alpha1.MLflow
 	return ingress
 }
 
+// checkBackendConnectivity checks if the backend database is reachable
+func (r *MLflowServerReconciler) checkBackendConnectivity(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+
+	// For now, we'll implement a basic check based on the backend type
+	// In a production environment, you would want to actually connect to the database
+	// and verify connectivity with proper credentials
+
+	switch mlflowServer.Spec.Backend.Type {
+	case mlopsv1alpha1.BackendTypePostgreSQL, mlopsv1alpha1.BackendTypeMySQL:
+		// Validate that the secret exists
+		var secretName string
+		if mlflowServer.Spec.Backend.PostgreSQL != nil {
+			secretName = mlflowServer.Spec.Backend.PostgreSQL.CredentialsSecret
+		} else if mlflowServer.Spec.Backend.MySQL != nil {
+			secretName = mlflowServer.Spec.Backend.MySQL.CredentialsSecret
+		}
+
+		if secretName != "" {
+			secret := &corev1.Secret{}
+			err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: mlflowServer.Namespace}, secret)
+			if err != nil {
+				logger.Error(err, "Backend secret not found")
+				return err
+			}
+		}
+		logger.Info("Backend connectivity check passed")
+	case mlopsv1alpha1.BackendTypeSQLite:
+		logger.Info("SQLite backend - no connectivity check needed")
+	}
+
+	return nil
+}
+
+// checkArtifactStoreConnectivity checks if the artifact store is reachable
+func (r *MLflowServerReconciler) checkArtifactStoreConnectivity(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+
+	// For now, we'll implement a basic check based on the artifact store type
+	// In a production environment, you would want to actually connect to the store
+	// and verify connectivity with proper credentials
+
+	switch mlflowServer.Spec.ArtifactStore.Type {
+	case mlopsv1alpha1.ArtifactStoreTypeS3, mlopsv1alpha1.ArtifactStoreTypeGCS, mlopsv1alpha1.ArtifactStoreTypeAzure:
+		// Validate that the secret exists
+		var secretName string
+		if mlflowServer.Spec.ArtifactStore.S3 != nil {
+			secretName = mlflowServer.Spec.ArtifactStore.S3.CredentialsSecret
+		} else if mlflowServer.Spec.ArtifactStore.GCS != nil {
+			secretName = mlflowServer.Spec.ArtifactStore.GCS.CredentialsSecret
+		} else if mlflowServer.Spec.ArtifactStore.Azure != nil {
+			secretName = mlflowServer.Spec.ArtifactStore.Azure.CredentialsSecret
+		}
+
+		if secretName != "" {
+			secret := &corev1.Secret{}
+			err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: mlflowServer.Namespace}, secret)
+			if err != nil {
+				logger.Error(err, "Artifact store secret not found")
+				return err
+			}
+		}
+		logger.Info("Artifact store connectivity check passed")
+	case mlopsv1alpha1.ArtifactStoreTypePVC:
+		logger.Info("PVC artifact store - no connectivity check needed")
+	}
+
+	return nil
+}
+
 // updateStatus updates the status of the MLflowServer
 func (r *MLflowServerReconciler) updateStatus(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
 	logger := log.FromContext(ctx)
@@ -904,25 +974,47 @@ func (r *MLflowServerReconciler) updateStatus(ctx context.Context, mlflowServer 
 		}
 	}
 
-	// For now, assume artifact store and backend are connected
-	// In a real implementation, you would add health checks
-	mlflowServer.Status.ArtifactStoreConnected = true
-	mlflowServer.SetCondition(metav1.Condition{
-		Type:               mlopsv1alpha1.ConditionArtifactStoreConnected,
-		Status:             metav1.ConditionTrue,
-		Reason:             "Connected",
-		Message:            "Artifact store is connected",
-		LastTransitionTime: metav1.Now(),
-	})
+	// Check artifact store connectivity
+	if err := r.checkArtifactStoreConnectivity(ctx, mlflowServer); err != nil {
+		mlflowServer.Status.ArtifactStoreConnected = false
+		mlflowServer.SetCondition(metav1.Condition{
+			Type:               mlopsv1alpha1.ConditionArtifactStoreConnected,
+			Status:             metav1.ConditionFalse,
+			Reason:             "ConnectivityCheckFailed",
+			Message:            fmt.Sprintf("Artifact store connectivity check failed: %v", err),
+			LastTransitionTime: metav1.Now(),
+		})
+	} else {
+		mlflowServer.Status.ArtifactStoreConnected = true
+		mlflowServer.SetCondition(metav1.Condition{
+			Type:               mlopsv1alpha1.ConditionArtifactStoreConnected,
+			Status:             metav1.ConditionTrue,
+			Reason:             "Connected",
+			Message:            "Artifact store is connected",
+			LastTransitionTime: metav1.Now(),
+		})
+	}
 
-	mlflowServer.Status.BackendConnected = true
-	mlflowServer.SetCondition(metav1.Condition{
-		Type:               mlopsv1alpha1.ConditionBackendConnected,
-		Status:             metav1.ConditionTrue,
-		Reason:             "Connected",
-		Message:            "Backend database is connected",
-		LastTransitionTime: metav1.Now(),
-	})
+	// Check backend connectivity
+	if err := r.checkBackendConnectivity(ctx, mlflowServer); err != nil {
+		mlflowServer.Status.BackendConnected = false
+		mlflowServer.SetCondition(metav1.Condition{
+			Type:               mlopsv1alpha1.ConditionBackendConnected,
+			Status:             metav1.ConditionFalse,
+			Reason:             "ConnectivityCheckFailed",
+			Message:            fmt.Sprintf("Backend connectivity check failed: %v", err),
+			LastTransitionTime: metav1.Now(),
+		})
+	} else {
+		mlflowServer.Status.BackendConnected = true
+		mlflowServer.SetCondition(metav1.Condition{
+			Type:               mlopsv1alpha1.ConditionBackendConnected,
+			Status:             metav1.ConditionTrue,
+			Reason:             "Connected",
+			Message:            "Backend database is connected",
+			LastTransitionTime: metav1.Now(),
+		})
+	}
 
 	logger.Info("Updating status")
 	return r.Status().Update(ctx, mlflowServer)

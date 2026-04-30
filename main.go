@@ -63,6 +63,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Setup webhooks
+	if err = (&mlopsv1alpha1.MLflowServer{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "MLflowServer")
+		os.Exit(1)
+	}
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)

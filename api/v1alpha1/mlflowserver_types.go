@@ -321,6 +321,9 @@ const (
 
 	// MLflowServerFinalizer is the finalizer for MLflowServer resources
 	MLflowServerFinalizer = "mlflowservers.mlops.NotHarshhaa.io/finalizer"
+
+	// AllowedNamespacesAnnotation is the annotation key for allowed namespaces
+	AllowedNamespacesAnnotation = "mlflow-operator.mlops.NotHarshhaa.io/allowed-namespaces"
 )
 
 // SetCondition sets a condition on the MLflowServer status
