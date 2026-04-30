@@ -1,0 +1,38 @@
+apiVersion: mlops.your-org.io/v1alpha1
+kind: MLflowServer
+metadata:
+  name: team-alpha-mlflow
+  namespace: ml-team-alpha
+spec:
+  version: "2.11.0"
+
+  tracking:
+    replicas: 2
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+
+  backend:
+    type: postgresql
+    postgresql:
+      host: postgres.ml-team-alpha.svc.cluster.local
+      database: mlflow
+      credentialsSecret: mlflow-db-credentials
+
+  artifactStore:
+    type: s3
+    s3:
+      bucket: my-mlflow-artifacts
+      region: us-east-1
+      credentialsSecret: aws-artifact-credentials
+
+  ingress:
+    enabled: true
+    host: mlflow.team-alpha.internal
+    tls:
+      enabled: true
+      issuer: letsencrypt-prod

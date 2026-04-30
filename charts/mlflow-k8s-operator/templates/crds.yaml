@@ -1,0 +1,216 @@
+{{- if .Values.crds.install }}
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mlflowservers.mlops.your-org.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.11.0
+spec:
+  group: mlops.your-org.io
+  names:
+    kind: MLflowServer
+    listKind: MLflowServerList
+    plural: mlflowservers
+    singular: mlflowserver
+    shortNames:
+    - mlflow
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: MLflowServer is the Schema for the mlflowservers API
+        type: object
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object.'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents.'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MLflowServerSpec defines the desired state of MLflowServer
+            type: object
+            properties:
+              artifactStore:
+                description: ArtifactStore configuration for artifact storage
+                type: object
+                properties:
+                  type:
+                    description: Type is the artifact store type
+                    type: string
+                    enum:
+                    - s3
+                    - gcs
+                    - azure
+                    - pvc
+                  s3:
+                    type: object
+                    properties:
+                      bucket:
+                        type: string
+                      region:
+                        type: string
+                      credentialsSecret:
+                        type: string
+                      pathPrefix:
+                        type: string
+                      endpointURL:
+                        type: string
+                  gcs:
+                    type: object
+                    properties:
+                      bucket:
+                        type: string
+                      credentialsSecret:
+                        type: string
+                  azure:
+                    type: object
+                    properties:
+                      storageAccount:
+                        type: string
+                      container:
+                        type: string
+                      credentialsSecret:
+                        type: string
+                  pvc:
+                    type: object
+                    properties:
+                      storageClass:
+                        type: string
+                      size:
+                        type: string
+                      accessMode:
+                        type: string
+              backend:
+                description: Backend configuration for the tracking database
+                type: object
+                properties:
+                  type:
+                    description: Type is the database backend type
+                    type: string
+                    enum:
+                    - postgresql
+                    - mysql
+                    - sqlite
+                  postgresql:
+                    type: object
+                    properties:
+                      host:
+                        type: string
+                      port:
+                        type: integer
+                      database:
+                        type: string
+                      credentialsSecret:
+                        type: string
+                      sslMode:
+                        type: string
+                  mysql:
+                    type: object
+                    properties:
+                      host:
+                        type: string
+                      port:
+                        type: integer
+                      database:
+                        type: string
+                      credentialsSecret:
+                        type: string
+                  sqlite:
+                    type: object
+                    properties:
+                      pvc:
+                        type: object
+                        properties:
+                          storageClass:
+                            type: string
+                          size:
+                            type: string
+                          accessMode:
+                            type: string
+              tracking:
+                description: Tracking configuration for the MLflow tracking server
+                type: object
+                properties:
+                  replicas:
+                    type: integer
+                  resources:
+                    type: object
+                    properties:
+                      requests:
+                        type: object
+                      limits:
+                        type: object
+              ingress:
+                description: Ingress configuration for external access
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  host:
+                    type: string
+                  ingressClassName:
+                    type: string
+                  tls:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                      issuer:
+                        type: string
+                      secretName:
+                        type: string
+                  annotations:
+                    type: object
+                    additionalProperties:
+                      type: string
+              version:
+                description: Version is the MLflow image version to deploy
+                type: string
+            required:
+            - artifactStore
+            - backend
+            - tracking
+            - version
+          status:
+            description: MLflowServerStatus defines the observed state of MLflowServer
+            type: object
+            properties:
+              ready:
+                type: boolean
+              artifactStoreConnected:
+                type: boolean
+              backendConnected:
+                type: boolean
+              conditions:
+                type: array
+                items:
+                  type: object
+              observedGeneration:
+                type: integer
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: string
+    - jsonPath: .spec.artifactStore.type
+      name: Artifact Store
+      type: string
+    - jsonPath: .spec.backend.type
+      name: Backend
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+{{- end }}

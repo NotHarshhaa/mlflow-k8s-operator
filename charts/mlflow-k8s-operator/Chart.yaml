@@ -1,0 +1,17 @@
+apiVersion: v2
+name: mlflow-k8s-operator
+description: A Kubernetes operator that provisions and manages MLflow tracking servers, model registries, and artifact stores
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - mlflow
+  - mlops
+  - operator
+  - kubernetes
+home: https://github.com/your-org/mlflow-k8s-operator
+sources:
+  - https://github.com/your-org/mlflow-k8s-operator
+maintainers:
+  - name: Your Name
+    email: your-email@example.com

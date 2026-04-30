@@ -1,0 +1,323 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mlflowservers.mlops.your-org.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.11.0
+spec:
+  group: mlops.your-org.io
+  names:
+    kind: MLflowServer
+    listKind: MLflowServerList
+    plural: mlflowservers
+    singular: mlflowserver
+    shortNames:
+    - mlflow
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: MLflowServer is the Schema for the mlflowservers API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MLflowServerSpec defines the desired state of MLflowServer
+            properties:
+              artifactStore:
+                description: ArtifactStore configuration for artifact storage
+                properties:
+                  azure:
+                    description: Azure configuration when type is azure
+                    properties:
+                      container:
+                        type: string
+                      credentialsSecret:
+                        type: string
+                      storageAccount:
+                        type: string
+                    required:
+                    - container
+                    - credentialsSecret
+                    - storageAccount
+                    type: object
+                  gcs:
+                    description: GCS configuration when type is gcs
+                    properties:
+                      bucket:
+                        type: string
+                      credentialsSecret:
+                        type: string
+                    required:
+                    - bucket
+                    - credentialsSecret
+                    type: object
+                  pvc:
+                    description: PVC configuration when type is pvc
+                    properties:
+                      accessMode:
+                        default: ReadWriteOnce
+                        type: string
+                      size:
+                        default: 100Gi
+                        type: string
+                      storageClass:
+                        type: string
+                    type: object
+                  s3:
+                    description: S3 configuration when type is s3
+                    properties:
+                      bucket:
+                        type: string
+                      credentialsSecret:
+                        type: string
+                      endpointURL:
+                        type: string
+                      pathPrefix:
+                        type: string
+                      region:
+                        type: string
+                    required:
+                    - bucket
+                    - credentialsSecret
+                    - region
+                    type: object
+                  type:
+                    description: Type is the artifact store type: s3, gcs, azure, or
+                      pvc
+                    enum:
+                    - s3
+                    - gcs
+                    - azure
+                    - pvc
+                    type: string
+                required:
+                - type
+                type: object
+              backend:
+                description: Backend configuration for the tracking database
+                properties:
+                  mysql:
+                    description: MySQL configuration when type is mysql
+                    properties:
+                      credentialsSecret:
+                        type: string
+                      database:
+                        default: mlflow
+                        type: string
+                      host:
+                        type: string
+                      port:
+                        default: 3306
+                        format: int32
+                        type: int
+                    required:
+                    - credentialsSecret
+                    - host
+                    type: object
+                  postgresql:
+                    description: PostgreSQL configuration when type is postgresql
+                    properties:
+                      credentialsSecret:
+                        type: string
+                      database:
+                        default: mlflow
+                        type: string
+                      host:
+                        type: string
+                      port:
+                        default: 5432
+                        format: int32
+                        type: int
+                      sslMode:
+                        default: require
+                        type: string
+                    required:
+                    - credentialsSecret
+                    - host
+                    type: object
+                  sqlite:
+                    description: SQLite configuration when type is sqlite
+                    properties:
+                      pvc:
+                        description: PVC is the PVC configuration for SQLite storage
+                        properties:
+                          accessMode:
+                            default: ReadWriteOnce
+                            type: string
+                          size:
+                            default: 100Gi
+                            type: string
+                          storageClass:
+                            type: string
+                        type: object
+                    type: object
+                  type:
+                    description: Type is the database backend type: postgresql, mysql,
+                      or sqlite
+                    enum:
+                    - postgresql
+                    - mysql
+                    - sqlite
+                    type: string
+                required:
+                - type
+                type: object
+              ingress:
+                description: Ingress configuration for external access
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  enabled:
+                    default: false
+                    type: boolean
+                  host:
+                    type: string
+                  ingressClassName:
+                    type: string
+                  tls:
+                    description: TLS configuration
+                    properties:
+                      enabled:
+                        default: false
+                        type: boolean
+                      issuer:
+                        type: string
+                      secretName:
+                        type: string
+                    type: object
+                type: object
+              tracking:
+                description: Tracking configuration for the MLflow tracking server
+                properties:
+                  replicas:
+                    default: 1
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  resources:
+                    description: Resources defines CPU and memory requests and limits
+                    properties:
+                      claims:
+                        items:
+                          properties:
+                            name:
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPEi]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPEi]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        type: object
+                    type: object
+                type: object
+              version:
+                default: "2.11.0"
+                type: string
+            required:
+            - artifactStore
+            - backend
+            - tracking
+            - version
+            type: object
+          status:
+            description: MLflowServerStatus defines the observed state of MLflowServer
+            properties:
+              artifactStoreConnected:
+                type: boolean
+              backendConnected:
+                type: boolean
+              conditions:
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource."
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition
+                        transitioned from one status to another.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message is a human readable explanation of the last
+                        transition.
+                      type: string
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation
+                        that the condition was set based upon.
+                      format: int64
+                      type: integer
+                    reason:
+                      description: reason contains a programmatic identifier indicating
+                        the reason for the condition's last transition.
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: type of condition in CamelCase
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                format: int64
+                type: integer
+              ready:
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: string
+    - jsonPath: .spec.artifactStore.type
+      name: Artifact Store
+      type: string
+    - jsonPath: .spec.backend.type
+      name: Backend
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date

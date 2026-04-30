@@ -1,0 +1,30 @@
+apiVersion: mlops.your-org.io/v1alpha1
+kind: MLflowServer
+metadata:
+  name: mlflow-local
+  namespace: default
+spec:
+  version: "2.11.0"
+
+  tracking:
+    replicas: 1
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+  backend:
+    type: sqlite
+    sqlite:
+      pvc:
+        storageClass: standard
+        size: 10Gi
+
+  artifactStore:
+    type: pvc
+    pvc:
+      storageClass: standard
+      size: 50Gi

@@ -1,0 +1,8 @@
+version: "3"
+domain: mlops.your-org.io
+repo: github.com/your-org/mlflow-k8s-operator
+resources:
+- group: mlops
+  kind: MLflowServer
+  version: v1alpha1
+  path: api/v1alpha1
