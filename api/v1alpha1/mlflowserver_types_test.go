@@ -8,7 +8,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 func TestMLflowServerTypes(t *testing.T) {
@@ -26,18 +25,25 @@ var _ = Describe("MLflowServer", func() {
 					Namespace: "default",
 				},
 				Spec: MLflowServerSpec{
-					Replicas: ptr.To[int32](1),
-					Image: ImageSpec{
-						Repository: "mlflow/mlflow",
-						Tag:        "2.7.1",
+					Version: "2.11.0",
+					Tracking: TrackingConfig{
+						Replicas: 1,
+					},
+					Backend: BackendConfig{
+						Type:   BackendTypeSQLite,
+						SQLite: &SQLiteConfig{},
+					},
+					ArtifactStore: ArtifactStoreConfig{
+						Type: ArtifactStoreTypePVC,
+						PVC:  &PVCConfig{},
 					},
 				},
 			}
 
 			Expect(mlflowServer.Name).To(Equal("test-mlflow"))
 			Expect(mlflowServer.Namespace).To(Equal("default"))
-			Expect(mlflowServer.Spec.Replicas).To(Equal(ptr.To[int32](1)))
-			Expect(mlflowServer.Spec.Image.Repository).To(Equal("mlflow/mlflow"))
+			Expect(mlflowServer.Spec.Version).To(Equal("2.11.0"))
+			Expect(mlflowServer.Spec.Tracking.Replicas).To(Equal(int32(1)))
 		})
 
 		It("Should accept a full specification", func() {
@@ -48,128 +54,152 @@ var _ = Describe("MLflowServer", func() {
 					Namespace: "mlflow-system",
 				},
 				Spec: MLflowServerSpec{
-					Replicas: ptr.To[int32](3),
-					Image: ImageSpec{
-						Repository: "custom/mlflow",
-						Tag:        "v1.0.0",
-						PullPolicy: corev1.PullIfNotPresent,
-					},
-					Resources: corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("200m"),
-							corev1.ResourceMemory: resource.MustParse("512Mi"),
-						},
-						Limits: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("1000m"),
-							corev1.ResourceMemory: resource.MustParse("1Gi"),
+					Version: "2.11.0",
+					Tracking: TrackingConfig{
+						Replicas: 3,
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("200m"),
+								corev1.ResourceMemory: resource.MustParse("512Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1000m"),
+								corev1.ResourceMemory: resource.MustParse("1Gi"),
+							},
 						},
 					},
-					BackendStore: BackendStoreSpec{
-						Type:     "postgresql",
-						Host:     "postgres.example.com",
-						Port:     5432,
-						Database: "mlflowdb",
-						User:     "mlflowuser",
-						PasswordSecret: &SecretRef{
-							Name: "db-secret",
-							Key:  "password",
+					Backend: BackendConfig{
+						Type: BackendTypePostgreSQL,
+						PostgreSQL: &PostgreSQLConfig{
+							Host:              "postgres.example.com",
+							Port:              5432,
+							Database:          "mlflowdb",
+							CredentialsSecret: "db-secret",
+							SSLMode:           "require",
 						},
 					},
-					DefaultArtifactRoot: "s3://my-bucket/mlflow",
-					Service: ServiceSpec{
-						Type: corev1.ServiceTypeLoadBalancer,
-						Port: 5000,
+					ArtifactStore: ArtifactStoreConfig{
+						Type: ArtifactStoreTypeS3,
+						S3: &S3Config{
+							Bucket:            "my-bucket",
+							Region:            "us-east-1",
+							CredentialsSecret: "aws-credentials",
+							PathPrefix:        "mlflow",
+						},
 					},
-					Ingress: &IngressSpec{
-						Enabled: true,
-						Host:    "mlflow.example.com",
-						TLS:     true,
+					Ingress: IngressConfig{
+						Enabled:          true,
+						Host:             "mlflow.example.com",
+						IngressClassName: "nginx",
+						TLS: &TLSConfig{
+							Enabled: true,
+							Issuer:  "letsencrypt-prod",
+						},
 					},
 				},
 			}
 
-			Expect(mlflowServer.Spec.Replicas).To(Equal(ptr.To[int32](3)))
-			Expect(mlflowServer.Spec.Image.Repository).To(Equal("custom/mlflow"))
-			Expect(mlflowServer.Spec.BackendStore.Type).To(Equal("postgresql"))
-			Expect(mlflowServer.Spec.BackendStore.Host).To(Equal("postgres.example.com"))
-			Expect(mlflowServer.Spec.DefaultArtifactRoot).To(Equal("s3://my-bucket/mlflow"))
+			Expect(mlflowServer.Spec.Version).To(Equal("2.11.0"))
+			Expect(mlflowServer.Spec.Tracking.Replicas).To(Equal(int32(3)))
+			Expect(mlflowServer.Spec.Backend.Type).To(Equal(BackendTypePostgreSQL))
+			Expect(mlflowServer.Spec.Backend.PostgreSQL.Host).To(Equal("postgres.example.com"))
+			Expect(mlflowServer.Spec.ArtifactStore.Type).To(Equal(ArtifactStoreTypeS3))
+			Expect(mlflowServer.Spec.ArtifactStore.S3.Bucket).To(Equal("my-bucket"))
 			Expect(mlflowServer.Spec.Ingress.Enabled).To(BeTrue())
 		})
 	})
 
-	Context("When defining backend store configurations", func() {
+	Context("When defining backend configurations", func() {
 		It("Should support PostgreSQL backend", func() {
-			backend := BackendStoreSpec{
-				Type:     "postgresql",
-				Host:     "localhost",
-				Port:     5432,
-				Database: "mlflow",
-				User:     "mlflow",
+			backend := BackendConfig{
+				Type: BackendTypePostgreSQL,
+				PostgreSQL: &PostgreSQLConfig{
+					Host:              "localhost",
+					Port:              5432,
+					Database:          "mlflow",
+					CredentialsSecret: "db-secret",
+				},
 			}
 
-			Expect(backend.Type).To(Equal("postgresql"))
-			Expect(backend.Port).To(Equal(5432))
+			Expect(backend.Type).To(Equal(BackendTypePostgreSQL))
+			Expect(backend.PostgreSQL.Port).To(Equal(int32(5432)))
 		})
 
 		It("Should support MySQL backend", func() {
-			backend := BackendStoreSpec{
-				Type:     "mysql",
-				Host:     "localhost",
-				Port:     3306,
-				Database: "mlflow",
-				User:     "mlflow",
+			backend := BackendConfig{
+				Type: BackendTypeMySQL,
+				MySQL: &MySQLConfig{
+					Host:              "localhost",
+					Port:              3306,
+					Database:          "mlflow",
+					CredentialsSecret: "db-secret",
+				},
 			}
 
-			Expect(backend.Type).To(Equal("mysql"))
-			Expect(backend.Port).To(Equal(3306))
+			Expect(backend.Type).To(Equal(BackendTypeMySQL))
+			Expect(backend.MySQL.Port).To(Equal(int32(3306)))
 		})
 
 		It("Should support SQLite backend", func() {
-			backend := BackendStoreSpec{
-				Type: "sqlite",
-				Path: "/mlflow/mlflow.db",
+			backend := BackendConfig{
+				Type: BackendTypeSQLite,
+				SQLite: &SQLiteConfig{
+					PVC: &PVCConfig{
+						Size: "10Gi",
+					},
+				},
 			}
 
-			Expect(backend.Type).To(Equal("sqlite"))
-			Expect(backend.Path).To(Equal("/mlflow/mlflow.db"))
+			Expect(backend.Type).To(Equal(BackendTypeSQLite))
+			Expect(backend.SQLite.PVC.Size).To(Equal("10Gi"))
 		})
 	})
 
-	Context("When defining service configurations", func() {
-		It("Should support ClusterIP service", func() {
-			service := ServiceSpec{
-				Type: corev1.ServiceTypeClusterIP,
-				Port: 5000,
+	Context("When defining artifact store configurations", func() {
+		It("Should support S3 artifact store", func() {
+			store := ArtifactStoreConfig{
+				Type: ArtifactStoreTypeS3,
+				S3: &S3Config{
+					Bucket:            "my-bucket",
+					Region:            "us-east-1",
+					CredentialsSecret: "aws-secret",
+				},
 			}
 
-			Expect(service.Type).To(Equal(corev1.ServiceTypeClusterIP))
-			Expect(service.Port).To(Equal(5000))
+			Expect(store.Type).To(Equal(ArtifactStoreTypeS3))
+			Expect(store.S3.Bucket).To(Equal("my-bucket"))
 		})
 
-		It("Should support LoadBalancer service", func() {
-			service := ServiceSpec{
-				Type: corev1.ServiceTypeLoadBalancer,
-				Port: 5000,
+		It("Should support GCS artifact store", func() {
+			store := ArtifactStoreConfig{
+				Type: ArtifactStoreTypeGCS,
+				GCS: &GCSConfig{
+					Bucket:            "my-gcs-bucket",
+					CredentialsSecret: "gcp-secret",
+				},
 			}
 
-			Expect(service.Type).To(Equal(corev1.ServiceTypeLoadBalancer))
+			Expect(store.Type).To(Equal(ArtifactStoreTypeGCS))
+			Expect(store.GCS.Bucket).To(Equal("my-gcs-bucket"))
 		})
 
-		It("Should support NodePort service", func() {
-			service := ServiceSpec{
-				Type:     corev1.ServiceTypeNodePort,
-				Port:     5000,
-				NodePort: ptr.To[int32](30000),
+		It("Should support PVC artifact store", func() {
+			store := ArtifactStoreConfig{
+				Type: ArtifactStoreTypePVC,
+				PVC: &PVCConfig{
+					StorageClass: "standard",
+					Size:         "100Gi",
+				},
 			}
 
-			Expect(service.Type).To(Equal(corev1.ServiceTypeNodePort))
-			Expect(service.NodePort).To(Equal(ptr.To[int32](30000)))
+			Expect(store.Type).To(Equal(ArtifactStoreTypePVC))
+			Expect(store.PVC.Size).To(Equal("100Gi"))
 		})
 	})
 
 	Context("When defining ingress configurations", func() {
 		It("Should support disabled ingress", func() {
-			ingress := &IngressSpec{
+			ingress := IngressConfig{
 				Enabled: false,
 			}
 
@@ -177,19 +207,20 @@ var _ = Describe("MLflowServer", func() {
 		})
 
 		It("Should support enabled ingress with TLS", func() {
-			ingress := &IngressSpec{
-				Enabled: true,
-				Host:    "mlflow.example.com",
-				TLS:     true,
-				TLSSecret: &SecretRef{
-					Name: "mlflow-tls",
-					Key:  "tls.crt",
+			ingress := IngressConfig{
+				Enabled:          true,
+				Host:             "mlflow.example.com",
+				IngressClassName: "nginx",
+				TLS: &TLSConfig{
+					Enabled:    true,
+					Issuer:     "letsencrypt-prod",
+					SecretName: "mlflow-tls",
 				},
 			}
 
 			Expect(ingress.Enabled).To(BeTrue())
 			Expect(ingress.Host).To(Equal("mlflow.example.com"))
-			Expect(ingress.TLS).To(BeTrue())
+			Expect(ingress.TLS.Enabled).To(BeTrue())
 		})
 	})
 })

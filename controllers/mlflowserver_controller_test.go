@@ -1,13 +1,11 @@
 package controllers
 
 import (
-	"context"
 	"testing"
 
 	"github.com/NotHarshhaa/mlflow-k8s-operator/api/v1alpha1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/utils/ptr"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -23,7 +21,6 @@ var _ = Describe("MLflowServer Controller", func() {
 	Context("When creating a new MLflowServer", func() {
 		It("Should create the deployment successfully", func() {
 			By("Creating a new MLflowServer")
-			ctx := context.Background()
 
 			mlflowServer := &v1alpha1.MLflowServer{
 				ObjectMeta: metav1.ObjectMeta{
@@ -31,33 +28,38 @@ var _ = Describe("MLflowServer Controller", func() {
 					Namespace: "default",
 				},
 				Spec: v1alpha1.MLflowServerSpec{
-					Replicas: ptr.To[int32](1),
-					Image: v1alpha1.ImageSpec{
-						Repository: "mlflow/mlflow",
-						Tag:        "2.7.1",
-					},
-					Resources: corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("100m"),
-							corev1.ResourceMemory: resource.MustParse("256Mi"),
-						},
-						Limits: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("500m"),
-							corev1.ResourceMemory: resource.MustParse("512Mi"),
-						},
-					},
-					BackendStore: v1alpha1.BackendStoreSpec{
-						Type:     "postgresql",
-						Host:     "postgresql.default.svc.cluster.local",
-						Port:     5432,
-						Database: "mlflow",
-						User:     "mlflow",
-						PasswordSecret: &v1alpha1.SecretRef{
-							Name: "mlflow-db-credentials",
-							Key:  "password",
+					Version: "2.11.0",
+					Tracking: v1alpha1.TrackingConfig{
+						Replicas: 1,
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("256Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("500m"),
+								corev1.ResourceMemory: resource.MustParse("512Mi"),
+							},
 						},
 					},
-					DefaultArtifactRoot: "s3://mlflow-artifacts",
+					Backend: v1alpha1.BackendConfig{
+						Type: v1alpha1.BackendTypePostgreSQL,
+						PostgreSQL: &v1alpha1.PostgreSQLConfig{
+							Host:              "postgresql.default.svc.cluster.local",
+							Port:              5432,
+							Database:          "mlflow",
+							CredentialsSecret: "mlflow-db-credentials",
+							SSLMode:           "require",
+						},
+					},
+					ArtifactStore: v1alpha1.ArtifactStoreConfig{
+						Type: v1alpha1.ArtifactStoreTypeS3,
+						S3: &v1alpha1.S3Config{
+							Bucket:            "mlflow-artifacts",
+							Region:            "us-east-1",
+							CredentialsSecret: "aws-credentials",
+						},
+					},
 				},
 			}
 
@@ -65,22 +67,30 @@ var _ = Describe("MLflowServer Controller", func() {
 			// In a real environment, you would use envtest to set up a test Kubernetes cluster
 			// and then actually create the resource and verify the controller's behavior
 
-			Expect(mlflowServer.Spec.Replicas).To(Equal(ptr.To[int32](1)))
-			Expect(mlflowServer.Spec.Image.Repository).To(Equal("mlflow/mlflow"))
+			Expect(mlflowServer.Spec.Version).To(Equal("2.11.0"))
+			Expect(mlflowServer.Spec.Tracking.Replicas).To(Equal(int32(1)))
 		})
 
 		It("Should validate the MLflowServer spec", func() {
 			By("Testing spec validation")
 			spec := v1alpha1.MLflowServerSpec{
-				Replicas: ptr.To[int32](1),
-				Image: v1alpha1.ImageSpec{
-					Repository: "mlflow/mlflow",
-					Tag:        "2.7.1",
+				Version: "2.11.0",
+				Tracking: v1alpha1.TrackingConfig{
+					Replicas: 1,
+				},
+				Backend: v1alpha1.BackendConfig{
+					Type:   v1alpha1.BackendTypeSQLite,
+					SQLite: &v1alpha1.SQLiteConfig{},
+				},
+				ArtifactStore: v1alpha1.ArtifactStoreConfig{
+					Type: v1alpha1.ArtifactStoreTypePVC,
+					PVC:  &v1alpha1.PVCConfig{},
 				},
 			}
 
-			Expect(spec.Image.Repository).NotTo(BeEmpty())
-			Expect(spec.Image.Tag).NotTo(BeEmpty())
+			Expect(spec.Version).NotTo(BeEmpty())
+			Expect(spec.Backend.Type).NotTo(BeEmpty())
+			Expect(spec.ArtifactStore.Type).NotTo(BeEmpty())
 		})
 	})
 })

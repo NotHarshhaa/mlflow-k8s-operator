@@ -87,14 +87,21 @@ var _ = Describe("MLflowServer E2E Tests", func() {
 					Namespace: "default",
 				},
 				Spec: mlflowv1alpha1.MLflowServerSpec{
-					Replicas: ptr.To[int32](1),
-					Image: mlflowv1alpha1.ImageSpec{
-						Repository: "mlflow/mlflow",
-						Tag:        "2.7.1",
+					Version: "2.11.0",
+					Tracking: mlflowv1alpha1.TrackingConfig{
+						Replicas: 1,
 					},
-					BackendStore: mlflowv1alpha1.BackendStoreSpec{
-						Type: "sqlite",
-						Path: "/mlflow/mlflow.db",
+					Backend: mlflowv1alpha1.BackendConfig{
+						Type: mlflowv1alpha1.BackendTypeSQLite,
+						SQLite: &mlflowv1alpha1.SQLiteConfig{
+							PVC: &mlflowv1alpha1.PVCConfig{
+								Size: "10Gi",
+							},
+						},
+					},
+					ArtifactStore: mlflowv1alpha1.ArtifactStoreConfig{
+						Type: mlflowv1alpha1.ArtifactStoreTypePVC,
+						PVC:  &mlflowv1alpha1.PVCConfig{},
 					},
 				},
 			}
@@ -121,7 +128,7 @@ var _ = Describe("MLflowServer E2E Tests", func() {
 				if err != nil {
 					return false
 				}
-				return deployment.Status.ReadyReplicas == *mlflowServer.Spec.Replicas
+				return deployment.Status.ReadyReplicas == mlflowServer.Spec.Tracking.Replicas
 			}, timeout, interval).Should(BeTrue())
 
 			By("Cleaning up the MLflowServer")
@@ -153,21 +160,23 @@ var _ = Describe("MLflowServer E2E Tests", func() {
 					Namespace: "default",
 				},
 				Spec: mlflowv1alpha1.MLflowServerSpec{
-					Replicas: ptr.To[int32](1),
-					Image: mlflowv1alpha1.ImageSpec{
-						Repository: "mlflow/mlflow",
-						Tag:        "2.7.1",
+					Version: "2.11.0",
+					Tracking: mlflowv1alpha1.TrackingConfig{
+						Replicas: 1,
 					},
-					BackendStore: mlflowv1alpha1.BackendStoreSpec{
-						Type:     "postgresql",
-						Host:     "postgres.default.svc.cluster.local",
-						Port:     5432,
-						Database: "mlflow",
-						User:     "mlflow",
-						PasswordSecret: &mlflowv1alpha1.SecretRef{
-							Name: "mlflow-db-credentials",
-							Key:  "password",
+					Backend: mlflowv1alpha1.BackendConfig{
+						Type: mlflowv1alpha1.BackendTypePostgreSQL,
+						PostgreSQL: &mlflowv1alpha1.PostgreSQLConfig{
+							Host:              "postgres.default.svc.cluster.local",
+							Port:              5432,
+							Database:          "mlflow",
+							CredentialsSecret: "mlflow-db-credentials",
+							SSLMode:           "require",
 						},
+					},
+					ArtifactStore: mlflowv1alpha1.ArtifactStoreConfig{
+						Type: mlflowv1alpha1.ArtifactStoreTypePVC,
+						PVC:  &mlflowv1alpha1.PVCConfig{},
 					},
 				},
 			}
@@ -185,7 +194,7 @@ var _ = Describe("MLflowServer E2E Tests", func() {
 				return err == nil
 			}, timeout, interval).Should(BeTrue())
 
-			Expect(createdMLflow.Spec.BackendStore.Type).To(Equal("postgresql"))
+			Expect(createdMLflow.Spec.Backend.Type).To(Equal(mlflowv1alpha1.BackendTypePostgreSQL))
 
 			By("Cleaning up")
 			err = k8sClient.Delete(ctx, mlflowServer)
@@ -205,24 +214,31 @@ var _ = Describe("MLflowServer E2E Tests", func() {
 					Namespace: "default",
 				},
 				Spec: mlflowv1alpha1.MLflowServerSpec{
-					Replicas: ptr.To[int32](2),
-					Image: mlflowv1alpha1.ImageSpec{
-						Repository: "mlflow/mlflow",
-						Tag:        "2.7.1",
-					},
-					Resources: corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("200m"),
-							corev1.ResourceMemory: resource.MustParse("512Mi"),
+					Version: "2.11.0",
+					Tracking: mlflowv1alpha1.TrackingConfig{
+						Replicas: 2,
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("200m"),
+								corev1.ResourceMemory: resource.MustParse("512Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1000m"),
+								corev1.ResourceMemory: resource.MustParse("1Gi"),
+							},
 						},
-						Limits: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("1000m"),
-							corev1.ResourceMemory: resource.MustParse("1Gi"),
+					},
+					Backend: mlflowv1alpha1.BackendConfig{
+						Type: mlflowv1alpha1.BackendTypeSQLite,
+						SQLite: &mlflowv1alpha1.SQLiteConfig{
+							PVC: &mlflowv1alpha1.PVCConfig{
+								Size: "10Gi",
+							},
 						},
 					},
-					BackendStore: mlflowv1alpha1.BackendStoreSpec{
-						Type: "sqlite",
-						Path: "/mlflow/mlflow.db",
+					ArtifactStore: mlflowv1alpha1.ArtifactStoreConfig{
+						Type: mlflowv1alpha1.ArtifactStoreTypePVC,
+						PVC:  &mlflowv1alpha1.PVCConfig{},
 					},
 				},
 			}
