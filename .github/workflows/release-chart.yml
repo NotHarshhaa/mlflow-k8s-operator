@@ -1,0 +1,48 @@
+name: Release Helm Chart
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'charts/mlflow-k8s-operator/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.13.0'
+
+      - name: Package Helm Chart
+        run: |
+          helm package ./charts/mlflow-k8s-operator -d ./docs
+
+      - name: Update Helm Repository Index
+        run: |
+          helm repo index ./docs --url https://NotHarshhaa.github.io/mlflow-k8s-operator
+
+      - name: Commit to gh-pages branch
+        run: |
+          git checkout --orphan gh-pages
+          git rm -rf .
+          cp -r docs/* .
+          git add .
+          git diff --staged --quiet || git commit -m "chore: update helm chart index"
+          git push origin gh-pages --force

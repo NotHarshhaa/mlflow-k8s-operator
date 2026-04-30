@@ -34,9 +34,19 @@ Every team doing ML on Kubernetes ends up manually deploying MLflow — writing 
 
 ### Install the operator
 
+> **Note:** The Helm chart is hosted on GitHub Pages. The GitHub Actions workflow automatically publishes the chart to the `gh-pages` branch when changes are pushed to `main`. Enable GitHub Pages in your repository settings (Settings > Pages > Source: Deploy from a branch > Branch: gh-pages).
+
 ```bash
 helm repo add mlflow-k8s-operator https://NotHarshhaa.github.io/mlflow-k8s-operator
 helm install mlflow-operator mlflow-k8s-operator/mlflow-k8s-operator \
+  --namespace mlflow-system \
+  --create-namespace
+```
+
+Or install from local directory:
+
+```bash
+helm install mlflow-operator ./charts/mlflow-k8s-operator \
   --namespace mlflow-system \
   --create-namespace
 ```
