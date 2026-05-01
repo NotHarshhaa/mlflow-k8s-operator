@@ -6,6 +6,9 @@
 [![Kubernetes](https://img.shields.io/badge/kubernetes-1.25%2B-326CE5?logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Operator SDK](https://img.shields.io/badge/built%20with-Operator%20SDK-red)](https://sdk.operatorframework.io/)
+[![Docker Image](https://img.shields.io/badge/Docker%20Hub-harshhaareddy%2Fmlflow--k8s--operator-blue?logo=docker)](https://hub.docker.com/r/harshhaareddy/mlflow-k8s-operator)
+[![GHCR Image](https://img.shields.io/badge/GHCR-notharshhaa%2Fmlflow--k8s--operator-blue?logo=github)](https://github.com/notharshhaa/mlflow-k8s-operator/pkgs/container/mlflow-k8s-operator)
+[![Helm Chart](https://img.shields.io/badge/Helm%20Chart-0.4.0-blue?logo=helm)](https://NotHarshhaa.github.io/mlflow-k8s-operator)
 
 ---
 
@@ -41,6 +44,20 @@ Every team doing ML on Kubernetes ends up manually deploying MLflow — writing 
 ---
 
 ## Quickstart
+
+### Docker Images
+
+The operator is available as Docker images:
+
+```bash
+# Docker Hub
+docker pull harshhaareddy/mlflow-k8s-operator:latest
+
+# GitHub Container Registry
+docker pull ghcr.io/notharshhaa/mlflow-k8s-operator:latest
+```
+
+Both images support multi-architecture (linux/amd64, linux/arm64).
 
 ### Install the operator
 
