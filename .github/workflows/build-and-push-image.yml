@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build and Push Docker Image (Sequential)
 
 on:
   push:
@@ -76,40 +76,67 @@ jobs:
             org.opencontainers.image.description=Kubernetes operator for MLflow
             org.opencontainers.image.vendor=NotHarshhaa
 
-      - name: Build and push to GHCR
+      # Build amd64 first
+      - name: Build amd64
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta-ghcr.outputs.tags }}
-          labels: ${{ steps.meta-ghcr.outputs.labels }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: temp-amd64:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
             VERSION=${{ github.ref_name }}
             COMMIT_SHA=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          provenance: false
 
-      - name: Build and push to Docker Hub
+      # Build arm64
+      - name: Build arm64
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta-docker.outputs.tags }}
-          labels: ${{ steps.meta-docker.outputs.labels }}
+          platforms: linux/arm64
+          push: false
+          tags: temp-arm64:latest
           cache-from: type=gha
-          cache-to: type=gha,mode=max
           build-args: |
             VERSION=${{ github.ref_name }}
             COMMIT_SHA=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          provenance: false
 
-      - name: Generate image digest
-        id: digest
+      # Create and push manifest to GHCR
+      - name: Create and push manifest to GHCR
         run: |
-          echo "digest=${{ steps.meta-ghcr.outputs.digest }}" >> $GITHUB_OUTPUT
+          docker manifest create ${{ env.IMAGE_NAME_GHCR }}:${{ github.ref_name }} \
+            temp-amd64:latest \
+            temp-arm64:latest
+          
+          docker manifest push ${{ env.IMAGE_NAME_GHCR }}:${{ github.ref_name }}
+          
+          # Tag and push latest if on main branch
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
+            docker tag ${{ env.IMAGE_NAME_GHCR }}:${{ github.ref_name }} ${{ env.IMAGE_NAME_GHCR }}:latest
+            docker push ${{ env.IMAGE_NAME_GHCR }}:latest
+          fi
+
+      # Create and push manifest to Docker Hub
+      - name: Create and push manifest to Docker Hub
+        run: |
+          docker manifest create ${{ env.IMAGE_NAME_DOCKER }}:${{ github.ref_name }} \
+            temp-amd64:latest \
+            temp-arm64:latest
+          
+          docker manifest push ${{ env.IMAGE_NAME_DOCKER }}:${{ github.ref_name }}
+          
+          # Tag and push latest if on main branch
+          if [[ "${{ github.ref_name }}" == "main" ]]; then
+            docker tag ${{ env.IMAGE_NAME_DOCKER }}:${{ github.ref_name }} ${{ env.IMAGE_NAME_DOCKER }}:latest
+            docker push ${{ env.IMAGE_NAME_DOCKER }}:latest
+          fi
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
