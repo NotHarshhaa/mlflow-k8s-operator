@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+*.md
+docs/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Helm charts
+charts/
+
+# Kubernetes configs
+config/
+docs/
+*.yaml
+*.yml
+
+# Python client (if exists)
+python-client/
+
+# Test files
+*_test.go
+tests/
+.coverage
+*.coverprofile
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+bin/
+dist/
+*.tar.gz
+*.tgz
+
+# Dependencies
+vendor/
+
+# Logs
+*.log
