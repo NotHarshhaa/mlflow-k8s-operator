@@ -7,7 +7,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/NotHarshhaa/mlflow-k8s-operator
   pullPolicy: IfNotPresent
-  tag: "0.4.0"
+  tag: "1.0.0"
 
 imagePullSecrets: []
 nameOverride: ""
@@ -94,3 +94,97 @@ controller:
   manager:
     args:
       - --leader-elect=false
+
+# Security configuration
+security:
+  # Pod Security Standard level: privileged, baseline, restricted
+  podSecurityStandard: restricted
+
+  # Pod-level security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Container-level security context
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65534
+    capabilities:
+      drop:
+        - ALL
+
+  # Network policy configuration
+  networkPolicy:
+    enabled: true
+    policyType: restrictive  # permissive, restrictive, custom
+    allowedNamespaces: []
+    allowedIPRanges: []
+
+  # Service account security
+  serviceAccount:
+    create: true
+    automountServiceAccountToken: false
+    boundServiceAccountToken: true
+    tokenExpiration: "3600s"
+    annotations: {}
+
+  # Image security
+  imageSecurity:
+    pullPolicy: IfNotPresent  # Always, IfNotPresent, Never
+    imagePullSecrets: []
+    signatureVerification:
+      enabled: false
+      keySecret: ""
+      cosignRepository: ""
+    vulnerabilityScan:
+      enabled: false
+      failOnVulnerabilities: true
+      severityThreshold: HIGH  # CRITICAL, HIGH, MEDIUM, LOW
+
+  # Anti-affinity configuration
+  antiAffinity:
+    enabled: true
+    topologyKey: kubernetes.io/hostname
+    spreadAcrossNodes: true
+    spreadAcrossZones: false
+
+  # RBAC security
+  rbac:
+    enabled: false
+    roleName: ""
+    roleBindingName: ""
+    subjects: []
+    resourceQuota:
+      enabled: false
+      cpu: ""
+      memory: ""
+      storage: ""
+      pods: ""
+
+  # External secret management
+  secretManagement:
+    type: ""  # vault, aws-secrets-manager, azure-key-vault, gcp-secret-manager
+    vault:
+      address: ""
+      authMethod: kubernetes
+      role: ""
+      secretPath: ""
+      namespace: ""
+    awsSecretsManager:
+      region: ""
+      secretPrefix: ""
+      credentialsSecret: ""
+    azureKeyVault:
+      vaultName: ""
+      tenantId: ""
+      credentialsSecret: ""
+    gcpSecretManager:
+      project: ""
+      secretPrefix: ""
+      credentialsSecret: ""

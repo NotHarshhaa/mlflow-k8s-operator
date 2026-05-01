@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,10 +39,14 @@ type MLflowServerReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is the main reconciliation loop
 func (r *MLflowServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -153,6 +158,33 @@ func (r *MLflowServerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := r.reconcileMigrationJob(ctx, mlflowServer); err != nil {
 			logger.Error(err, "Failed to reconcile migration job")
 			return ctrl.Result{}, err
+		}
+	}
+
+	// Reconcile security features if configured
+	if mlflowServer.Spec.Security != nil {
+		// Reconcile ServiceAccount if configured
+		if mlflowServer.Spec.Security.ServiceAccount != nil && mlflowServer.Spec.Security.ServiceAccount.Create {
+			if err := r.reconcileServiceAccount(ctx, mlflowServer); err != nil {
+				logger.Error(err, "Failed to reconcile ServiceAccount")
+				return ctrl.Result{}, err
+			}
+		}
+
+		// Reconcile NetworkPolicy if configured
+		if mlflowServer.Spec.Security.NetworkPolicy != nil && mlflowServer.Spec.Security.NetworkPolicy.Enabled {
+			if err := r.reconcileNetworkPolicy(ctx, mlflowServer); err != nil {
+				logger.Error(err, "Failed to reconcile NetworkPolicy")
+				return ctrl.Result{}, err
+			}
+		}
+
+		// Reconcile RBAC resources if configured
+		if mlflowServer.Spec.Security.RBAC != nil && mlflowServer.Spec.Security.RBAC.Enabled {
+			if err := r.reconcileRBAC(ctx, mlflowServer); err != nil {
+				logger.Error(err, "Failed to reconcile RBAC")
+				return ctrl.Result{}, err
+			}
 		}
 	}
 
@@ -586,16 +618,8 @@ func (r *MLflowServerReconciler) buildDeployment(mlflowServer *mlopsv1alpha1.MLf
 			Name:      "tmp",
 			MountPath: "/tmp",
 		}),
-		Resources: mlflowServer.Spec.Tracking.Resources,
-		SecurityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: boolPtr(false),
-			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{"ALL"},
-			},
-			ReadOnlyRootFilesystem: boolPtr(true),
-			RunAsNonRoot:           boolPtr(true),
-			RunAsUser:              int64Ptr(1000),
-		},
+		Resources:       mlflowServer.Spec.Tracking.Resources,
+		SecurityContext: r.buildContainerSecurityContext(mlflowServer),
 		Ports: []corev1.ContainerPort{
 			{
 				ContainerPort: 5000,
@@ -603,6 +627,9 @@ func (r *MLflowServerReconciler) buildDeployment(mlflowServer *mlopsv1alpha1.MLf
 			},
 		},
 	}
+
+	// Apply image security settings
+	r.applyImageSecurity(mlflowServer, &mlflowContainer)
 
 	// Apply custom probes if configured
 	if mlflowServer.Spec.Tracking.Probes != nil {
@@ -672,21 +699,23 @@ func (r *MLflowServerReconciler) buildDeployment(mlflowServer *mlopsv1alpha1.MLf
 
 	// Build pod spec
 	podSpec := corev1.PodSpec{
-		SecurityContext: &corev1.PodSecurityContext{
-			RunAsNonRoot: boolPtr(true),
-			RunAsUser:    int64Ptr(1000),
-			FSGroup:      int64Ptr(1000),
-			SeccompProfile: &corev1.SeccompProfile{
-				Type: corev1.SeccompProfileTypeRuntimeDefault,
-			},
-		},
-		Containers: containers,
+		SecurityContext: r.buildPodSecurityContext(mlflowServer),
+		Containers:      containers,
 		Volumes: append(volumes, corev1.Volume{
 			Name: "tmp",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		}),
+	}
+
+	// Apply service account if configured
+	if mlflowServer.Spec.Security != nil && mlflowServer.Spec.Security.ServiceAccount != nil && mlflowServer.Spec.Security.ServiceAccount.Create {
+		saName := fmt.Sprintf("%s-sa", mlflowServer.Name)
+		podSpec.ServiceAccountName = saName
+		if mlflowServer.Spec.Security.ServiceAccount.AutomountServiceAccountToken != nil {
+			podSpec.AutomountServiceAccountToken = mlflowServer.Spec.Security.ServiceAccount.AutomountServiceAccountToken
+		}
 	}
 
 	// Add init containers if configured
@@ -702,6 +731,9 @@ func (r *MLflowServerReconciler) buildDeployment(mlflowServer *mlopsv1alpha1.MLf
 		podSpec.PriorityClassName = mlflowServer.Spec.Scheduling.PriorityClassName
 		podSpec.TopologySpreadConstraints = mlflowServer.Spec.Scheduling.TopologySpreadConstraints
 	}
+
+	// Apply security anti-affinity rules
+	r.applyAntiAffinity(mlflowServer, &podSpec)
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1482,11 +1514,647 @@ func (r *MLflowServerReconciler) getLabels(mlflowServer *mlopsv1alpha1.MLflowSer
 	}
 }
 
+// buildContainerSecurityContext builds the container security context based on security configuration
+func (r *MLflowServerReconciler) buildContainerSecurityContext(mlflowServer *mlopsv1alpha1.MLflowServer) *corev1.SecurityContext {
+	// Default security context
+	secCtx := &corev1.SecurityContext{
+		AllowPrivilegeEscalation: boolPtr(false),
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
+		},
+		ReadOnlyRootFilesystem: boolPtr(true),
+		RunAsNonRoot:           boolPtr(true),
+		RunAsUser:              int64Ptr(1000),
+	}
+
+	// Apply custom security context if configured
+	if mlflowServer.Spec.Security != nil && mlflowServer.Spec.Security.ContainerSecurityContext != nil {
+		customSec := mlflowServer.Spec.Security.ContainerSecurityContext
+
+		if customSec.AllowPrivilegeEscalation != nil {
+			secCtx.AllowPrivilegeEscalation = customSec.AllowPrivilegeEscalation
+		}
+		if customSec.ReadOnlyRootFilesystem != nil {
+			secCtx.ReadOnlyRootFilesystem = customSec.ReadOnlyRootFilesystem
+		}
+		if customSec.RunAsNonRoot != nil {
+			secCtx.RunAsNonRoot = customSec.RunAsNonRoot
+		}
+		if customSec.RunAsUser != nil {
+			secCtx.RunAsUser = customSec.RunAsUser
+		}
+		if customSec.Privileged != nil {
+			secCtx.Privileged = customSec.Privileged
+		}
+		if customSec.Capabilities != nil {
+			secCtx.Capabilities = &corev1.Capabilities{}
+			if len(customSec.Capabilities.Add) > 0 {
+				secCtx.Capabilities.Add = customSec.Capabilities.Add
+			}
+			if len(customSec.Capabilities.Drop) > 0 {
+				secCtx.Capabilities.Drop = customSec.Capabilities.Drop
+			}
+		}
+		if customSec.SeccompProfile != nil {
+			secCtx.SeccompProfile = &corev1.SeccompProfile{
+				Type:             corev1.SeccompProfileType(customSec.SeccompProfile.Type),
+				LocalhostProfile: &customSec.SeccompProfile.LocalhostProfile,
+			}
+		}
+	}
+
+	return secCtx
+}
+
+// buildPodSecurityContext builds the pod security context based on security configuration
+func (r *MLflowServerReconciler) buildPodSecurityContext(mlflowServer *mlopsv1alpha1.MLflowServer) *corev1.PodSecurityContext {
+	// Default security context
+	secCtx := &corev1.PodSecurityContext{
+		RunAsNonRoot: boolPtr(true),
+		RunAsUser:    int64Ptr(1000),
+		FSGroup:      int64Ptr(1000),
+		SeccompProfile: &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileTypeRuntimeDefault,
+		},
+	}
+
+	// Apply custom security context if configured
+	if mlflowServer.Spec.Security != nil && mlflowServer.Spec.Security.PodSecurityContext != nil {
+		customSec := mlflowServer.Spec.Security.PodSecurityContext
+
+		if customSec.RunAsNonRoot != nil {
+			secCtx.RunAsNonRoot = customSec.RunAsNonRoot
+		}
+		if customSec.RunAsUser != nil {
+			secCtx.RunAsUser = customSec.RunAsUser
+		}
+		if customSec.RunAsGroup != nil {
+			secCtx.RunAsGroup = customSec.RunAsGroup
+		}
+		if customSec.FSGroup != nil {
+			secCtx.FSGroup = customSec.FSGroup
+		}
+		if customSec.SeccompProfile != nil {
+			secCtx.SeccompProfile = &corev1.SeccompProfile{
+				Type:             corev1.SeccompProfileType(customSec.SeccompProfile.Type),
+				LocalhostProfile: &customSec.SeccompProfile.LocalhostProfile,
+			}
+		}
+		if len(customSec.SupplementalGroups) > 0 {
+			secCtx.SupplementalGroups = customSec.SupplementalGroups
+		}
+		if len(customSec.Sysctls) > 0 {
+			secCtx.Sysctls = customSec.Sysctls
+		}
+	}
+
+	return secCtx
+}
+
+// applyImageSecurity applies image security settings to the container
+func (r *MLflowServerReconciler) applyImageSecurity(mlflowServer *mlopsv1alpha1.MLflowServer, container *corev1.Container) {
+	if mlflowServer.Spec.Security != nil && mlflowServer.Spec.Security.ImageSecurity != nil {
+		imgSec := mlflowServer.Spec.Security.ImageSecurity
+
+		// Apply image pull policy
+		if imgSec.PullPolicy != "" {
+			switch imgSec.PullPolicy {
+			case "Always":
+				container.ImagePullPolicy = corev1.PullAlways
+			case "Never":
+				container.ImagePullPolicy = corev1.PullNever
+			default:
+				container.ImagePullPolicy = corev1.PullIfNotPresent
+			}
+		}
+
+		// Note: Signature verification and vulnerability scanning would require
+		// additional admission webhook or init container integration
+		// This is a placeholder for future enhancement
+	}
+}
+
+// applyAntiAffinity applies anti-affinity rules to the pod spec
+func (r *MLflowServerReconciler) applyAntiAffinity(mlflowServer *mlopsv1alpha1.MLflowServer, podSpec *corev1.PodSpec) {
+	if mlflowServer.Spec.Security != nil && mlflowServer.Spec.Security.AntiAffinity != nil && mlflowServer.Spec.Security.AntiAffinity.Enabled {
+		aaConfig := mlflowServer.Spec.Security.AntiAffinity
+
+		if podSpec.Affinity == nil {
+			podSpec.Affinity = &corev1.Affinity{}
+		}
+
+		// Add pod anti-affinity to spread pods across nodes
+		if aaConfig.SpreadAcrossNodes {
+			podSpec.Affinity.PodAntiAffinity = &corev1.PodAntiAffinity{
+				PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+					{
+						Weight: 100,
+						PodAffinityTerm: corev1.PodAffinityTerm{
+							LabelSelector: &metav1.LabelSelector{
+								MatchLabels: r.getSelectorLabels(mlflowServer),
+							},
+							TopologyKey: aaConfig.TopologyKey,
+						},
+					},
+				},
+			}
+		}
+
+		// Add zone anti-affinity if enabled
+		if aaConfig.SpreadAcrossZones {
+			if podSpec.Affinity.PodAntiAffinity == nil {
+				podSpec.Affinity.PodAntiAffinity = &corev1.PodAntiAffinity{}
+			}
+			podSpec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution = append(
+				podSpec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
+				corev1.WeightedPodAffinityTerm{
+					Weight: 50,
+					PodAffinityTerm: corev1.PodAffinityTerm{
+						LabelSelector: &metav1.LabelSelector{
+							MatchLabels: r.getSelectorLabels(mlflowServer),
+						},
+						TopologyKey: "topology.kubernetes.io/zone",
+					},
+				},
+			)
+		}
+	}
+}
+
 // getSelectorLabels returns the selector labels for resources
 func (r *MLflowServerReconciler) getSelectorLabels(mlflowServer *mlopsv1alpha1.MLflowServer) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":     "mlflow",
 		"app.kubernetes.io/instance": mlflowServer.Name,
+	}
+}
+
+// reconcileServiceAccount creates or updates the ServiceAccount for MLflow
+func (r *MLflowServerReconciler) reconcileServiceAccount(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+
+	desiredServiceAccount := r.buildServiceAccount(mlflowServer)
+
+	if err := controllerutil.SetControllerReference(mlflowServer, desiredServiceAccount, r.Scheme); err != nil {
+		return err
+	}
+
+	existingServiceAccount := &corev1.ServiceAccount{}
+	err := r.Get(ctx, types.NamespacedName{Name: desiredServiceAccount.Name, Namespace: desiredServiceAccount.Namespace}, existingServiceAccount)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating ServiceAccount", "name", desiredServiceAccount.Name)
+			return r.Create(ctx, desiredServiceAccount)
+		}
+		return err
+	}
+
+	// Update if needed
+	existingServiceAccount.Annotations = desiredServiceAccount.Annotations
+	logger.Info("Updating ServiceAccount", "name", desiredServiceAccount.Name)
+	return r.Update(ctx, existingServiceAccount)
+}
+
+// buildServiceAccount builds the ServiceAccount for MLflow
+func (r *MLflowServerReconciler) buildServiceAccount(mlflowServer *mlopsv1alpha1.MLflowServer) *corev1.ServiceAccount {
+	saConfig := mlflowServer.Spec.Security.ServiceAccount
+
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        fmt.Sprintf("%s-sa", mlflowServer.Name),
+			Namespace:   mlflowServer.Namespace,
+			Labels:      r.getLabels(mlflowServer),
+			Annotations: map[string]string{},
+		},
+	}
+
+	// Add annotations
+	for k, v := range saConfig.Annotations {
+		sa.Annotations[k] = v
+	}
+
+	// Add bound token annotation if enabled
+	if saConfig.BoundServiceAccountToken {
+		sa.Annotations["kubernetes.io/enforce-mountable-secrets"] = "true"
+	}
+
+	return sa
+}
+
+// reconcileNetworkPolicy creates or updates the NetworkPolicy for MLflow
+func (r *MLflowServerReconciler) reconcileNetworkPolicy(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+
+	desiredNetworkPolicy := r.buildNetworkPolicy(mlflowServer)
+
+	if err := controllerutil.SetControllerReference(mlflowServer, desiredNetworkPolicy, r.Scheme); err != nil {
+		return err
+	}
+
+	existingNetworkPolicy := &networkingv1.NetworkPolicy{}
+	err := r.Get(ctx, types.NamespacedName{Name: desiredNetworkPolicy.Name, Namespace: desiredNetworkPolicy.Namespace}, existingNetworkPolicy)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating NetworkPolicy", "name", desiredNetworkPolicy.Name)
+			return r.Create(ctx, desiredNetworkPolicy)
+		}
+		return err
+	}
+
+	// Update if needed
+	existingNetworkPolicy.Spec = desiredNetworkPolicy.Spec
+	logger.Info("Updating NetworkPolicy", "name", desiredNetworkPolicy.Name)
+	return r.Update(ctx, existingNetworkPolicy)
+}
+
+// buildNetworkPolicy builds the NetworkPolicy for MLflow
+func (r *MLflowServerReconciler) buildNetworkPolicy(mlflowServer *mlopsv1alpha1.MLflowServer) *networkingv1.NetworkPolicy {
+	npConfig := mlflowServer.Spec.Security.NetworkPolicy
+	selectorLabels := r.getSelectorLabels(mlflowServer)
+
+	policyTypes := []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress}
+
+	np := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-netpol", mlflowServer.Name),
+			Namespace: mlflowServer.Namespace,
+			Labels:    r.getLabels(mlflowServer),
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: selectorLabels,
+			},
+			PolicyTypes: policyTypes,
+		},
+	}
+
+	// Build policy based on type
+	switch npConfig.PolicyType {
+	case "permissive":
+		// Allow all ingress and egress
+		np.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{
+			{
+				From: []networkingv1.NetworkPolicyPeer{
+					{
+						PodSelector: &metav1.LabelSelector{},
+					},
+				},
+			},
+		}
+		np.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{
+			{
+				To: []networkingv1.NetworkPolicyPeer{
+					{
+						PodSelector: &metav1.LabelSelector{},
+					},
+				},
+			},
+		}
+	case "restrictive":
+		// Restrictive: only allow ingress from same namespace and specific egress
+		np.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{
+			{
+				From: []networkingv1.NetworkPolicyPeer{
+					{
+						NamespaceSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"kubernetes.io/metadata.name": mlflowServer.Namespace,
+							},
+						},
+					},
+				},
+			},
+		}
+		np.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{
+			{
+				// Allow DNS
+				To: []networkingv1.NetworkPolicyPeer{
+					{
+						IPBlock: &networkingv1.IPBlock{
+							CIDR: "0.0.0.0/0",
+							Except: []string{
+								"10.0.0.0/8",
+								"172.16.0.0/12",
+								"192.168.0.0/16",
+							},
+						},
+					},
+				},
+				Ports: []networkingv1.NetworkPolicyPort{
+					{
+						Protocol: &protocolUDP,
+						Port:     &portDNS,
+					},
+					{
+						Protocol: &protocolTCP,
+						Port:     &portDNS,
+					},
+				},
+			},
+			{
+				// Allow to database and artifact store
+				To: []networkingv1.NetworkPolicyPeer{},
+			},
+		}
+	case "custom":
+		// Custom rules
+		np.Spec.Ingress = r.buildIngressRules(npConfig.IngressRules)
+		np.Spec.Egress = r.buildEgressRules(npConfig.EgressRules)
+	}
+
+	// Add allowed namespaces if specified
+	if len(npConfig.AllowedNamespaces) > 0 {
+		for _, ns := range npConfig.AllowedNamespaces {
+			np.Spec.Ingress = append(np.Spec.Ingress, networkingv1.NetworkPolicyIngressRule{
+				From: []networkingv1.NetworkPolicyPeer{
+					{
+						NamespaceSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"kubernetes.io/metadata.name": ns,
+							},
+						},
+					},
+				},
+			})
+		}
+	}
+
+	// Add allowed IP ranges if specified
+	if len(npConfig.AllowedIPRanges) > 0 {
+		for _, cidr := range npConfig.AllowedIPRanges {
+			np.Spec.Ingress = append(np.Spec.Ingress, networkingv1.NetworkPolicyIngressRule{
+				From: []networkingv1.NetworkPolicyPeer{
+					{
+						IPBlock: &networkingv1.IPBlock{
+							CIDR: cidr,
+						},
+					},
+				},
+			})
+		}
+	}
+
+	return np
+}
+
+// buildIngressRules converts custom ingress rules to Kubernetes NetworkPolicyIngressRule
+func (r *MLflowServerReconciler) buildIngressRules(rules []mlopsv1alpha1.NetworkPolicyIngressRule) []networkingv1.NetworkPolicyIngressRule {
+	var k8sRules []networkingv1.NetworkPolicyIngressRule
+	for _, rule := range rules {
+		k8sRule := networkingv1.NetworkPolicyIngressRule{
+			Ports: r.buildNetworkPolicyPorts(rule.Ports),
+			From:  r.buildNetworkPolicyPeers(rule.From),
+		}
+		k8sRules = append(k8sRules, k8sRule)
+	}
+	return k8sRules
+}
+
+// buildEgressRules converts custom egress rules to Kubernetes NetworkPolicyEgressRule
+func (r *MLflowServerReconciler) buildEgressRules(rules []mlopsv1alpha1.NetworkPolicyEgressRule) []networkingv1.NetworkPolicyEgressRule {
+	var k8sRules []networkingv1.NetworkPolicyEgressRule
+	for _, rule := range rules {
+		k8sRule := networkingv1.NetworkPolicyEgressRule{
+			Ports: r.buildNetworkPolicyPorts(rule.Ports),
+			To:    r.buildNetworkPolicyPeers(rule.To),
+		}
+		k8sRules = append(k8sRules, k8sRule)
+	}
+	return k8sRules
+}
+
+// buildNetworkPolicyPorts converts custom ports to Kubernetes NetworkPolicyPort
+func (r *MLflowServerReconciler) buildNetworkPolicyPorts(ports []mlopsv1alpha1.NetworkPolicyPort) []networkingv1.NetworkPolicyPort {
+	var k8sPorts []networkingv1.NetworkPolicyPort
+	for _, port := range ports {
+		k8sPort := networkingv1.NetworkPolicyPort{
+			Port: port.Port,
+			EndPort: func() *int32 {
+				if port.EndPort > 0 {
+					return &port.EndPort
+				}
+				return nil
+			}(),
+			Protocol: (*corev1.Protocol)(&port.Protocol),
+		}
+		k8sPorts = append(k8sPorts, k8sPort)
+	}
+	return k8sPorts
+}
+
+// buildNetworkPolicyPeers converts custom peers to Kubernetes NetworkPolicyPeer
+func (r *MLflowServerReconciler) buildNetworkPolicyPeers(peers []mlopsv1alpha1.NetworkPolicyPeer) []networkingv1.NetworkPolicyPeer {
+	var k8sPeers []networkingv1.NetworkPolicyPeer
+	for _, peer := range peers {
+		k8sPeer := networkingv1.NetworkPolicyPeer{
+			PodSelector:       peer.PodSelector,
+			NamespaceSelector: peer.NamespaceSelector,
+		}
+		if peer.IPBlock != nil {
+			k8sPeer.IPBlock = &networkingv1.IPBlock{
+				CIDR:   peer.IPBlock.CIDR,
+				Except: peer.IPBlock.Except,
+			}
+		}
+		k8sPeers = append(k8sPeers, k8sPeer)
+	}
+	return k8sPeers
+}
+
+// reconcileRBAC creates or updates RBAC resources for MLflow
+func (r *MLflowServerReconciler) reconcileRBAC(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+	rbacConfig := mlflowServer.Spec.Security.RBAC
+
+	// Reconcile Role
+	desiredRole := r.buildRole(mlflowServer)
+	if err := controllerutil.SetControllerReference(mlflowServer, desiredRole, r.Scheme); err != nil {
+		return err
+	}
+
+	existingRole := &rbacv1.Role{}
+	err := r.Get(ctx, types.NamespacedName{Name: desiredRole.Name, Namespace: desiredRole.Namespace}, existingRole)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating Role", "name", desiredRole.Name)
+			if err := r.Create(ctx, desiredRole); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	} else {
+		existingRole.Rules = desiredRole.Rules
+		logger.Info("Updating Role", "name", desiredRole.Name)
+		if err := r.Update(ctx, existingRole); err != nil {
+			return err
+		}
+	}
+
+	// Reconcile RoleBinding
+	desiredRoleBinding := r.buildRoleBinding(mlflowServer)
+	if err := controllerutil.SetControllerReference(mlflowServer, desiredRoleBinding, r.Scheme); err != nil {
+		return err
+	}
+
+	existingRoleBinding := &rbacv1.RoleBinding{}
+	err = r.Get(ctx, types.NamespacedName{Name: desiredRoleBinding.Name, Namespace: desiredRoleBinding.Namespace}, existingRoleBinding)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating RoleBinding", "name", desiredRoleBinding.Name)
+			if err := r.Create(ctx, desiredRoleBinding); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	} else {
+		existingRoleBinding.Subjects = desiredRoleBinding.Subjects
+		existingRoleBinding.RoleRef = desiredRoleBinding.RoleRef
+		logger.Info("Updating RoleBinding", "name", desiredRoleBinding.Name)
+		if err := r.Update(ctx, existingRoleBinding); err != nil {
+			return err
+		}
+	}
+
+	// Reconcile ResourceQuota if enabled
+	if rbacConfig.ResourceQuota != nil && rbacConfig.ResourceQuota.Enabled {
+		if err := r.reconcileResourceQuota(ctx, mlflowServer); err != nil {
+			logger.Error(err, "Failed to reconcile ResourceQuota")
+			return err
+		}
+	}
+
+	return nil
+}
+
+// buildRole builds the Role for MLflow
+func (r *MLflowServerReconciler) buildRole(mlflowServer *mlopsv1alpha1.MLflowServer) *rbacv1.Role {
+	rbacConfig := mlflowServer.Spec.Security.RBAC
+	roleName := rbacConfig.RoleName
+	if roleName == "" {
+		roleName = fmt.Sprintf("%s-role", mlflowServer.Name)
+	}
+
+	return &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      roleName,
+			Namespace: mlflowServer.Namespace,
+			Labels:    r.getLabels(mlflowServer),
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"configmaps", "secrets"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
+				APIGroups: []string{""},
+				Resources: []string{"persistentvolumeclaims"},
+				Verbs:     []string{"get", "list", "watch", "create"},
+			},
+		},
+	}
+}
+
+// buildRoleBinding builds the RoleBinding for MLflow
+func (r *MLflowServerReconciler) buildRoleBinding(mlflowServer *mlopsv1alpha1.MLflowServer) *rbacv1.RoleBinding {
+	rbacConfig := mlflowServer.Spec.Security.RBAC
+	roleBindingName := rbacConfig.RoleBindingName
+	if roleBindingName == "" {
+		roleBindingName = fmt.Sprintf("%s-rolebinding", mlflowServer.Name)
+	}
+
+	roleName := rbacConfig.RoleName
+	if roleName == "" {
+		roleName = fmt.Sprintf("%s-role", mlflowServer.Name)
+	}
+
+	var subjects []rbacv1.Subject
+	if rbacConfig.Subjects != nil {
+		subjects = rbacConfig.Subjects
+	}
+	if len(subjects) == 0 {
+		// Default to the service account
+		saName := fmt.Sprintf("%s-sa", mlflowServer.Name)
+		subjects = []rbacv1.Subject{
+			{
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      saName,
+				Namespace: mlflowServer.Namespace,
+			},
+		}
+	}
+
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      roleBindingName,
+			Namespace: mlflowServer.Namespace,
+			Labels:    r.getLabels(mlflowServer),
+		},
+		Subjects: subjects,
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "Role",
+			Name:     roleName,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+}
+
+// reconcileResourceQuota creates or updates the ResourceQuota for MLflow
+func (r *MLflowServerReconciler) reconcileResourceQuota(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+
+	desiredResourceQuota := r.buildResourceQuota(mlflowServer)
+
+	if err := controllerutil.SetControllerReference(mlflowServer, desiredResourceQuota, r.Scheme); err != nil {
+		return err
+	}
+
+	existingResourceQuota := &corev1.ResourceQuota{}
+	err := r.Get(ctx, types.NamespacedName{Name: desiredResourceQuota.Name, Namespace: desiredResourceQuota.Namespace}, existingResourceQuota)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating ResourceQuota", "name", desiredResourceQuota.Name)
+			return r.Create(ctx, desiredResourceQuota)
+		}
+		return err
+	}
+
+	// Update if needed
+	existingResourceQuota.Spec = desiredResourceQuota.Spec
+	logger.Info("Updating ResourceQuota", "name", desiredResourceQuota.Name)
+	return r.Update(ctx, existingResourceQuota)
+}
+
+// buildResourceQuota builds the ResourceQuota for MLflow
+func (r *MLflowServerReconciler) buildResourceQuota(mlflowServer *mlopsv1alpha1.MLflowServer) *corev1.ResourceQuota {
+	quotaConfig := mlflowServer.Spec.Security.RBAC.ResourceQuota
+
+	hard := corev1.ResourceList{}
+
+	if quotaConfig.CPU != "" {
+		hard[corev1.ResourceLimitsCPU] = resource.MustParse(quotaConfig.CPU)
+	}
+	if quotaConfig.Memory != "" {
+		hard[corev1.ResourceLimitsMemory] = resource.MustParse(quotaConfig.Memory)
+	}
+	if quotaConfig.Storage != "" {
+		hard[corev1.ResourceRequestsStorage] = resource.MustParse(quotaConfig.Storage)
+	}
+	if quotaConfig.Pods != "" {
+		hard[corev1.ResourcePods] = resource.MustParse(quotaConfig.Pods)
+	}
+
+	return &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-quota", mlflowServer.Name),
+			Namespace: mlflowServer.Namespace,
+			Labels:    r.getLabels(mlflowServer),
+		},
+		Spec: corev1.ResourceQuotaSpec{
+			Hard: hard,
+		},
 	}
 }
 
@@ -1498,15 +2166,23 @@ func (r *MLflowServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&corev1.ServiceAccount{}).
 		Owns(&networkingv1.Ingress{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&batchv1.Job{}).
+		Owns(&rbacv1.Role{}).
+		Owns(&rbacv1.RoleBinding{}).
+		Owns(&corev1.ResourceQuota{}).
 		Complete(r)
 }
 
 var (
 	pathTypePrefix = networkingv1.PathTypePrefix
+	protocolTCP    = corev1.ProtocolTCP
+	protocolUDP    = corev1.ProtocolUDP
+	portDNS        = intstr.FromInt(53)
 )
 
 // Helper functions for pointer conversions

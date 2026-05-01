@@ -1,0 +1,146 @@
+apiVersion: mlops.NotHarshhaa.io/v1alpha1
+kind: MLflowServer
+metadata:
+  name: secure-mlflow
+  namespace: ml-production
+spec:
+  version: "2.11.0"
+
+  tracking:
+    replicas: 3
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+
+  backend:
+    type: postgresql
+    postgresql:
+      host: postgres.ml-production.svc.cluster.local
+      database: mlflow
+      credentialsSecret: mlflow-db-credentials
+      port: 5432
+      sslMode: require
+
+  artifactStore:
+    type: s3
+    s3:
+      bucket: secure-mlflow-artifacts
+      region: us-east-1
+      credentialsSecret: aws-artifact-credentials
+
+  ingress:
+    enabled: true
+    host: mlflow.secure.internal
+    tls:
+      enabled: true
+      issuer: letsencrypt-prod
+
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+  security:
+    # Pod Security Standard compliance
+    podSecurityStandard: restricted
+
+    # Pod-level security context
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+      supplementalGroups:
+        - 1000
+        - 1001
+
+    # Container-level security context
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 1000
+      privileged: false
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+
+    # Network policy for network isolation
+    networkPolicy:
+      enabled: true
+      policyType: restrictive
+      allowedNamespaces:
+        - ml-production
+        - ml-monitoring
+      allowedIPRanges:
+        - 10.0.0.0/8
+        - 192.168.0.0/16
+
+    # Service account with bound tokens
+    serviceAccount:
+      create: true
+      automountServiceAccountToken: false
+      boundServiceAccountToken: true
+      tokenExpiration: "3600s"
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/mlflow-role
+
+    # Image security settings
+    imageSecurity:
+      pullPolicy: Always
+      imagePullSecrets:
+        - name: ghcr-registry-secret
+      signatureVerification:
+        enabled: true
+        keySecret: cosign-public-key
+        cosignRepository: ghcr.io/NotHarshhaa/mlflow
+      vulnerabilityScan:
+        enabled: true
+        failOnVulnerabilities: true
+        severityThreshold: HIGH
+
+    # Anti-affinity for high availability
+    antiAffinity:
+      enabled: true
+      topologyKey: kubernetes.io/hostname
+      spreadAcrossNodes: true
+      spreadAcrossZones: true
+
+    # RBAC with resource quotas
+    rbac:
+      enabled: true
+      roleName: mlflow-server-role
+      roleBindingName: mlflow-server-rolebinding
+      subjects:
+        - kind: ServiceAccount
+          name: secure-mlflow-sa
+          namespace: ml-production
+      resourceQuota:
+        enabled: true
+        cpu: "10"
+        memory: "20Gi"
+        storage: "100Gi"
+        pods: "20"
+
+    # External secret management (example with Vault)
+    secretManagement:
+      type: vault
+      vault:
+        address: https://vault.internal:8200
+        authMethod: kubernetes
+        role: mlflow-role
+        secretPath: secret/mlflow/production
+        namespace: mlflow

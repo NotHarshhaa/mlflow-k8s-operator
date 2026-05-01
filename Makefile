@@ -62,13 +62,13 @@ docker-push: ## Push the docker image.
 
 .PHONY: docker-build-push-ghcr
 docker-build-push-ghcr: ## Build and push to GHCR.
-	$(MAKE) docker-build IMG=ghcr.io/NotHarshhaa/mlflow-k8s-operator:0.4.0
-	docker push ghcr.io/NotHarshhaa/mlflow-k8s-operator:0.4.0
+	$(MAKE) docker-build IMG=ghcr.io/NotHarshhaa/mlflow-k8s-operator:1.0.0
+	docker push ghcr.io/NotHarshhaa/mlflow-k8s-operator:1.0.0
 
 .PHONY: docker-build-push-dockerhub
 docker-build-push-dockerhub: ## Build and push to Docker Hub.
-	$(MAKE) docker-build IMG=NotHarshhaa/mlflow-k8s-operator:0.4.0
-	docker push NotHarshhaa/mlflow-k8s-operator:0.4.0
+	$(MAKE) docker-build IMG=NotHarshhaa/mlflow-k8s-operator:1.0.0
+	docker push NotHarshhaa/mlflow-k8s-operator:1.0.0
 
 .PHONY: docker-build-push-all
 docker-build-push-all: ## Build and push to both registries.
