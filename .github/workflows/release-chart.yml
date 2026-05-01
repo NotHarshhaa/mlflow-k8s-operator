@@ -50,4 +50,4 @@ jobs:
           git diff --staged --quiet || git commit -m "chore: update helm chart index"
           git push origin gh-pages --force
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}

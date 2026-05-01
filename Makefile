@@ -52,9 +52,28 @@ run: fmt vet ## Run a controller from your host.
 docker-build: ## Build the docker image.
 	docker build -t ${IMG} .
 
+.PHONY: docker-build-multi
+docker-build-multi: ## Build the docker image for multiple platforms.
+	docker buildx build --platform linux/amd64,linux/arm64 -t ${IMG} .
+
 .PHONY: docker-push
 docker-push: ## Push the docker image.
 	docker push ${IMG}
+
+.PHONY: docker-build-push-ghcr
+docker-build-push-ghcr: ## Build and push to GHCR.
+	$(MAKE) docker-build IMG=ghcr.io/NotHarshhaa/mlflow-k8s-operator:0.4.0
+	docker push ghcr.io/NotHarshhaa/mlflow-k8s-operator:0.4.0
+
+.PHONY: docker-build-push-dockerhub
+docker-build-push-dockerhub: ## Build and push to Docker Hub.
+	$(MAKE) docker-build IMG=NotHarshhaa/mlflow-k8s-operator:0.4.0
+	docker push NotHarshhaa/mlflow-k8s-operator:0.4.0
+
+.PHONY: docker-build-push-all
+docker-build-push-all: ## Build and push to both registries.
+	$(MAKE) docker-build-push-ghcr
+	$(MAKE) docker-build-push-dockerhub
 
 ##@ Deployment
 
