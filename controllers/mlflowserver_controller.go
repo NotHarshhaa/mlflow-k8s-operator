@@ -5,8 +5,11 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,6 +39,9 @@ type MLflowServerReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is the main reconciliation loop
 func (r *MLflowServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -113,6 +119,39 @@ func (r *MLflowServerReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if mlflowServer.Spec.Ingress.Enabled {
 		if err := r.reconcileIngress(ctx, mlflowServer); err != nil {
 			logger.Error(err, "Failed to reconcile Ingress")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Reconcile HPA if enabled
+	if mlflowServer.Spec.Autoscaling != nil && mlflowServer.Spec.Autoscaling.Enabled {
+		if err := r.reconcileHPA(ctx, mlflowServer); err != nil {
+			logger.Error(err, "Failed to reconcile HPA")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Reconcile PodDisruptionBudget if enabled
+	if mlflowServer.Spec.PodDisruptionBudget != nil && mlflowServer.Spec.PodDisruptionBudget.Enabled {
+		if err := r.reconcilePDB(ctx, mlflowServer); err != nil {
+			logger.Error(err, "Failed to reconcile PodDisruptionBudget")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Reconcile ServiceMonitor if enabled (requires prometheus-operator)
+	// This is commented out as it requires the prometheus-operator CRD to be installed
+	// if mlflowServer.Spec.ServiceMonitor != nil && mlflowServer.Spec.ServiceMonitor.Enabled {
+	// 	if err := r.reconcileServiceMonitor(ctx, mlflowServer); err != nil {
+	// 		logger.Error(err, "Failed to reconcile ServiceMonitor")
+	// 		return ctrl.Result{}, err
+	// 	}
+	// }
+
+	// Reconcile migration job if enabled
+	if mlflowServer.Spec.Migration != nil && mlflowServer.Spec.Migration.Enabled {
+		if err := r.reconcileMigrationJob(ctx, mlflowServer); err != nil {
+			logger.Error(err, "Failed to reconcile migration job")
 			return ctrl.Result{}, err
 		}
 	}
@@ -524,6 +563,146 @@ func (r *MLflowServerReconciler) buildDeployment(mlflowServer *mlopsv1alpha1.MLf
 		}
 	}
 
+	// Build MLflow server args with custom arguments
+	args := []string{"server", "--host", "0.0.0.0", "--port", "5000"}
+	if len(mlflowServer.Spec.Tracking.AdditionalArgs) > 0 {
+		args = append(args, mlflowServer.Spec.Tracking.AdditionalArgs...)
+	}
+
+	// Build pod labels
+	podLabels := r.getLabels(mlflowServer)
+	for k, v := range mlflowServer.Spec.Tracking.PodLabels {
+		podLabels[k] = v
+	}
+
+	// Build the MLflow container
+	mlflowContainer := corev1.Container{
+		Name:            "mlflow",
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args:            args,
+		Env:             env,
+		VolumeMounts: append(volumeMounts, corev1.VolumeMount{
+			Name:      "tmp",
+			MountPath: "/tmp",
+		}),
+		Resources: mlflowServer.Spec.Tracking.Resources,
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: boolPtr(false),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			ReadOnlyRootFilesystem: boolPtr(true),
+			RunAsNonRoot:           boolPtr(true),
+			RunAsUser:              int64Ptr(1000),
+		},
+		Ports: []corev1.ContainerPort{
+			{
+				ContainerPort: 5000,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+	}
+
+	// Apply custom probes if configured
+	if mlflowServer.Spec.Tracking.Probes != nil {
+		if mlflowServer.Spec.Tracking.Probes.LivenessProbe != nil {
+			mlflowContainer.LivenessProbe = mlflowServer.Spec.Tracking.Probes.LivenessProbe
+		} else {
+			mlflowContainer.LivenessProbe = &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path: "/health",
+						Port: intstr.FromInt(5000),
+					},
+				},
+				InitialDelaySeconds: 30,
+				PeriodSeconds:       10,
+			}
+		}
+		if mlflowServer.Spec.Tracking.Probes.ReadinessProbe != nil {
+			mlflowContainer.ReadinessProbe = mlflowServer.Spec.Tracking.Probes.ReadinessProbe
+		} else {
+			mlflowContainer.ReadinessProbe = &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path: "/health",
+						Port: intstr.FromInt(5000),
+					},
+				},
+				InitialDelaySeconds: 10,
+				PeriodSeconds:       5,
+			}
+		}
+		if mlflowServer.Spec.Tracking.Probes.StartupProbe != nil {
+			mlflowContainer.StartupProbe = mlflowServer.Spec.Tracking.Probes.StartupProbe
+		}
+	} else {
+		// Default probes
+		mlflowContainer.LivenessProbe = &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/health",
+					Port: intstr.FromInt(5000),
+				},
+			},
+			InitialDelaySeconds: 30,
+			PeriodSeconds:       10,
+		}
+		mlflowContainer.ReadinessProbe = &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/health",
+					Port: intstr.FromInt(5000),
+				},
+			},
+			InitialDelaySeconds: 10,
+			PeriodSeconds:       5,
+		}
+	}
+
+	// Apply lifecycle hooks if configured
+	if mlflowServer.Spec.Tracking.Lifecycle != nil {
+		mlflowContainer.Lifecycle = mlflowServer.Spec.Tracking.Lifecycle
+	}
+
+	// Build containers list
+	containers := []corev1.Container{mlflowContainer}
+	containers = append(containers, mlflowServer.Spec.Tracking.SidecarContainers...)
+
+	// Build pod spec
+	podSpec := corev1.PodSpec{
+		SecurityContext: &corev1.PodSecurityContext{
+			RunAsNonRoot: boolPtr(true),
+			RunAsUser:    int64Ptr(1000),
+			FSGroup:      int64Ptr(1000),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		Containers: containers,
+		Volumes: append(volumes, corev1.Volume{
+			Name: "tmp",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}),
+	}
+
+	// Add init containers if configured
+	if len(mlflowServer.Spec.Tracking.InitContainers) > 0 {
+		podSpec.InitContainers = mlflowServer.Spec.Tracking.InitContainers
+	}
+
+	// Apply scheduling configuration
+	if mlflowServer.Spec.Scheduling != nil {
+		podSpec.NodeSelector = mlflowServer.Spec.Scheduling.NodeSelector
+		podSpec.Tolerations = mlflowServer.Spec.Scheduling.Tolerations
+		podSpec.Affinity = mlflowServer.Spec.Scheduling.Affinity
+		podSpec.PriorityClassName = mlflowServer.Spec.Scheduling.PriorityClassName
+		podSpec.TopologySpreadConstraints = mlflowServer.Spec.Scheduling.TopologySpreadConstraints
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      mlflowServer.Name,
@@ -537,73 +716,10 @@ func (r *MLflowServerReconciler) buildDeployment(mlflowServer *mlopsv1alpha1.MLf
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: r.getLabels(mlflowServer),
+					Labels:      podLabels,
+					Annotations: mlflowServer.Spec.Tracking.PodAnnotations,
 				},
-				Spec: corev1.PodSpec{
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: boolPtr(true),
-						RunAsUser:    int64Ptr(1000),
-						FSGroup:      int64Ptr(1000),
-						SeccompProfile: &corev1.SeccompProfile{
-							Type: corev1.SeccompProfileTypeRuntimeDefault,
-						},
-					},
-					Containers: []corev1.Container{
-						{
-							Name:            "mlflow",
-							Image:           image,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							Args:            []string{"server", "--host", "0.0.0.0", "--port", "5000"},
-							Env:             env,
-							VolumeMounts: append(volumeMounts, corev1.VolumeMount{
-								Name:      "tmp",
-								MountPath: "/tmp",
-							}),
-							Resources: mlflowServer.Spec.Tracking.Resources,
-							SecurityContext: &corev1.SecurityContext{
-								AllowPrivilegeEscalation: boolPtr(false),
-								Capabilities: &corev1.Capabilities{
-									Drop: []corev1.Capability{"ALL"},
-								},
-								ReadOnlyRootFilesystem: boolPtr(true),
-								RunAsNonRoot:           boolPtr(true),
-								RunAsUser:              int64Ptr(1000),
-							},
-							Ports: []corev1.ContainerPort{
-								{
-									ContainerPort: 5000,
-									Protocol:      corev1.ProtocolTCP,
-								},
-							},
-							LivenessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/health",
-										Port: intstr.FromInt(5000),
-									},
-								},
-								InitialDelaySeconds: 30,
-								PeriodSeconds:       10,
-							},
-							ReadinessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/health",
-										Port: intstr.FromInt(5000),
-									},
-								},
-								InitialDelaySeconds: 10,
-								PeriodSeconds:       5,
-							},
-						},
-					},
-					Volumes: append(volumes, corev1.Volume{
-						Name: "tmp",
-						VolumeSource: corev1.VolumeSource{
-							EmptyDir: &corev1.EmptyDirVolumeSource{},
-						},
-					}),
-				},
+				Spec: podSpec,
 			},
 		},
 	}
@@ -866,6 +982,342 @@ func (r *MLflowServerReconciler) buildIngress(mlflowServer *mlopsv1alpha1.MLflow
 	return ingress
 }
 
+// reconcileHPA creates or updates the HorizontalPodAutoscaler for MLflow
+func (r *MLflowServerReconciler) reconcileHPA(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+
+	desiredHPA := r.buildHPA(mlflowServer)
+
+	if err := controllerutil.SetControllerReference(mlflowServer, desiredHPA, r.Scheme); err != nil {
+		return err
+	}
+
+	existingHPA := &autoscalingv2.HorizontalPodAutoscaler{}
+	err := r.Get(ctx, types.NamespacedName{Name: desiredHPA.Name, Namespace: desiredHPA.Namespace}, existingHPA)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating HPA", "name", desiredHPA.Name)
+			return r.Create(ctx, desiredHPA)
+		}
+		return err
+	}
+
+	// Update if needed
+	existingHPA.Spec = desiredHPA.Spec
+	logger.Info("Updating HPA", "name", desiredHPA.Name)
+	return r.Update(ctx, existingHPA)
+}
+
+// buildHPA builds the HorizontalPodAutoscaler for MLflow
+func (r *MLflowServerReconciler) buildHPA(mlflowServer *mlopsv1alpha1.MLflowServer) *autoscalingv2.HorizontalPodAutoscaler {
+	cfg := mlflowServer.Spec.Autoscaling
+	minReplicas := int32(1)
+	if cfg.MinReplicas > 0 {
+		minReplicas = cfg.MinReplicas
+	}
+	maxReplicas := int32(10)
+	if cfg.MaxReplicas > 0 {
+		maxReplicas = cfg.MaxReplicas
+	}
+
+	metrics := []autoscalingv2.MetricSpec{}
+	if cfg.TargetCPUUtilizationPercentage > 0 {
+		metrics = append(metrics, autoscalingv2.MetricSpec{
+			Type: autoscalingv2.ResourceMetricSourceType,
+			Resource: &autoscalingv2.ResourceMetricSource{
+				Name: corev1.ResourceCPU,
+				Target: autoscalingv2.MetricTarget{
+					Type:               autoscalingv2.UtilizationMetricType,
+					AverageUtilization: &cfg.TargetCPUUtilizationPercentage,
+				},
+			},
+		})
+	}
+	if cfg.TargetMemoryUtilizationPercentage > 0 {
+		metrics = append(metrics, autoscalingv2.MetricSpec{
+			Type: autoscalingv2.ResourceMetricSourceType,
+			Resource: &autoscalingv2.ResourceMetricSource{
+				Name: corev1.ResourceMemory,
+				Target: autoscalingv2.MetricTarget{
+					Type:               autoscalingv2.UtilizationMetricType,
+					AverageUtilization: &cfg.TargetMemoryUtilizationPercentage,
+				},
+			},
+		})
+	}
+
+	return &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mlflowServer.Name,
+			Namespace: mlflowServer.Namespace,
+			Labels:    r.getLabels(mlflowServer),
+		},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       mlflowServer.Name,
+			},
+			MinReplicas: &minReplicas,
+			MaxReplicas: maxReplicas,
+			Metrics:     metrics,
+		},
+	}
+}
+
+// reconcilePDB creates or updates the PodDisruptionBudget for MLflow
+func (r *MLflowServerReconciler) reconcilePDB(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+
+	desiredPDB := r.buildPDB(mlflowServer)
+
+	if err := controllerutil.SetControllerReference(mlflowServer, desiredPDB, r.Scheme); err != nil {
+		return err
+	}
+
+	existingPDB := &policyv1.PodDisruptionBudget{}
+	err := r.Get(ctx, types.NamespacedName{Name: desiredPDB.Name, Namespace: desiredPDB.Namespace}, existingPDB)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating PodDisruptionBudget", "name", desiredPDB.Name)
+			return r.Create(ctx, desiredPDB)
+		}
+		return err
+	}
+
+	// Update if needed
+	existingPDB.Spec = desiredPDB.Spec
+	logger.Info("Updating PodDisruptionBudget", "name", desiredPDB.Name)
+	return r.Update(ctx, existingPDB)
+}
+
+// buildPDB builds the PodDisruptionBudget for MLflow
+func (r *MLflowServerReconciler) buildPDB(mlflowServer *mlopsv1alpha1.MLflowServer) *policyv1.PodDisruptionBudget {
+	cfg := mlflowServer.Spec.PodDisruptionBudget
+	pdb := &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mlflowServer.Name,
+			Namespace: mlflowServer.Namespace,
+			Labels:    r.getLabels(mlflowServer),
+		},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: r.getSelectorLabels(mlflowServer),
+			},
+		},
+	}
+
+	if cfg.MinAvailable != nil {
+		minAvailable := intstr.FromInt(int(*cfg.MinAvailable))
+		pdb.Spec.MinAvailable = &minAvailable
+	}
+	if cfg.MaxUnavailable != nil {
+		maxUnavailable := intstr.FromInt(int(*cfg.MaxUnavailable))
+		pdb.Spec.MaxUnavailable = &maxUnavailable
+	}
+
+	return pdb
+}
+
+// reconcileServiceMonitor creates or updates the ServiceMonitor for MLflow
+// This function is commented out as it requires the prometheus-operator CRD to be installed
+// To enable, add the monitoringv1 import and uncomment this function
+/*
+func (r *MLflowServerReconciler) reconcileServiceMonitor(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+
+	desiredSM := r.buildServiceMonitor(mlflowServer)
+
+	if err := controllerutil.SetControllerReference(mlflowServer, desiredSM, r.Scheme); err != nil {
+		return err
+	}
+
+	existingSM := &monitoringv1.ServiceMonitor{}
+	err := r.Get(ctx, types.NamespacedName{Name: desiredSM.Name, Namespace: desiredSM.Namespace}, existingSM)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating ServiceMonitor", "name", desiredSM.Name)
+			return r.Create(ctx, desiredSM)
+		}
+		return err
+	}
+
+	// Update if needed
+	existingSM.Spec = desiredSM.Spec
+	existingSM.Labels = desiredSM.Labels
+	logger.Info("Updating ServiceMonitor", "name", desiredSM.Name)
+	return r.Update(ctx, existingSM)
+}
+
+// buildServiceMonitor builds the ServiceMonitor for MLflow
+func (r *MLflowServerReconciler) buildServiceMonitor(mlflowServer *mlopsv1alpha1.MLflowServer) *monitoringv1.ServiceMonitor {
+	cfg := mlflowServer.Spec.ServiceMonitor
+	interval := "30s"
+	if cfg.Interval != "" {
+		interval = cfg.Interval
+	}
+	scrapeTimeout := "10s"
+	if cfg.ScrapeTimeout != "" {
+		scrapeTimeout = cfg.ScrapeTimeout
+	}
+
+	labels := r.getLabels(mlflowServer)
+	for k, v := range cfg.Labels {
+		labels[k] = v
+	}
+
+	return &monitoringv1.ServiceMonitor{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mlflowServer.Name,
+			Namespace: mlflowServer.Namespace,
+			Labels:    labels,
+		},
+		Spec: monitoringv1.ServiceMonitorSpec{
+			Selector: metav1.LabelSelector{
+				MatchLabels: r.getSelectorLabels(mlflowServer),
+			},
+			Endpoints: []monitoringv1.Endpoint{
+				{
+					Port:          "http",
+					Interval:      monitoringv1.Duration(interval),
+					ScrapeTimeout: monitoringv1.Duration(scrapeTimeout),
+					Path:          "/metrics",
+				},
+			},
+		},
+	}
+}
+*/
+
+// reconcileMigrationJob creates or updates the migration job for MLflow
+func (r *MLflowServerReconciler) reconcileMigrationJob(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
+	logger := log.FromContext(ctx)
+
+	// Check if migration is needed by comparing current version with previous
+	// For now, we'll create a job if the migration config is enabled
+	desiredJob := r.buildMigrationJob(mlflowServer)
+
+	if err := controllerutil.SetControllerReference(mlflowServer, desiredJob, r.Scheme); err != nil {
+		return err
+	}
+
+	existingJob := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: desiredJob.Name, Namespace: desiredJob.Namespace}, existingJob)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Creating migration job", "name", desiredJob.Name)
+			return r.Create(ctx, desiredJob)
+		}
+		return err
+	}
+
+	// Don't update if job is already completed
+	if existingJob.Status.Succeeded > 0 {
+		logger.Info("Migration job already completed", "name", desiredJob.Name)
+		return nil
+	}
+
+	return nil
+}
+
+// buildMigrationJob builds the migration job for MLflow
+func (r *MLflowServerReconciler) buildMigrationJob(mlflowServer *mlopsv1alpha1.MLflowServer) *batchv1.Job {
+	cfg := mlflowServer.Spec.Migration
+	backoffLimit := int32(6)
+	if cfg.BackoffLimit > 0 {
+		backoffLimit = cfg.BackoffLimit
+	}
+
+	image := fmt.Sprintf("ghcr.io/mlflow/mlflow:%s", mlflowServer.Spec.Version)
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        fmt.Sprintf("%s-migration", mlflowServer.Name),
+			Namespace:   mlflowServer.Namespace,
+			Labels:      r.getLabels(mlflowServer),
+			Annotations: cfg.JobAnnotations,
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoffLimit,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: r.getLabels(mlflowServer),
+				},
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{
+						{
+							Name:            "mlflow-migrate",
+							Image:           image,
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							Command:         []string{"mlflow", "db", "upgrade"},
+							Env:             r.buildCredentialEnvVars(mlflowServer),
+							EnvFrom: []corev1.EnvFromSource{
+								{
+									ConfigMapRef: &corev1.ConfigMapEnvSource{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: fmt.Sprintf("%s-config", mlflowServer.Name),
+										},
+									},
+								},
+							},
+						},
+					},
+					Volumes: r.buildMigrationVolumes(mlflowServer),
+				},
+			},
+		},
+	}
+
+	if cfg.ActiveDeadlineSeconds > 0 {
+		job.Spec.ActiveDeadlineSeconds = &cfg.ActiveDeadlineSeconds
+	}
+
+	return job
+}
+
+// buildMigrationVolumes builds the volumes for the migration job
+func (r *MLflowServerReconciler) buildMigrationVolumes(mlflowServer *mlopsv1alpha1.MLflowServer) []corev1.Volume {
+	volumes := []corev1.Volume{
+		{
+			Name: "tmp",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	}
+
+	// Add PVC volume if needed
+	if mlflowServer.Spec.Backend.Type == mlopsv1alpha1.BackendTypeSQLite ||
+		mlflowServer.Spec.ArtifactStore.Type == mlopsv1alpha1.ArtifactStoreTypePVC {
+		volumes = append(volumes, corev1.Volume{
+			Name: "mlflow-storage",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: fmt.Sprintf("%s-storage", mlflowServer.Name),
+				},
+			},
+		})
+	}
+
+	// Add GCS secret volume if using GCS artifact store
+	if mlflowServer.Spec.ArtifactStore.Type == mlopsv1alpha1.ArtifactStoreTypeGCS {
+		cfg := mlflowServer.Spec.ArtifactStore.GCS
+		if cfg != nil && cfg.CredentialsSecret != "" {
+			volumes = append(volumes, corev1.Volume{
+				Name: "gcs-credentials",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: cfg.CredentialsSecret,
+					},
+				},
+			})
+		}
+	}
+
+	return volumes
+}
+
 // checkBackendConnectivity checks if the backend database is reachable
 func (r *MLflowServerReconciler) checkBackendConnectivity(ctx context.Context, mlflowServer *mlopsv1alpha1.MLflowServer) error {
 	logger := log.FromContext(ctx)
@@ -1047,6 +1499,9 @@ func (r *MLflowServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&networkingv1.Ingress{}).
+		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
+		Owns(&policyv1.PodDisruptionBudget{}).
+		Owns(&batchv1.Job{}).
 		Complete(r)
 }
 

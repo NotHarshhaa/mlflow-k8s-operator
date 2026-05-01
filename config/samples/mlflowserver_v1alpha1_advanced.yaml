@@ -1,0 +1,174 @@
+# Advanced MLflowServer example demonstrating all new features
+apiVersion: mlops.NotHarshhaa.io/v1alpha1
+kind: MLflowServer
+metadata:
+  name: advanced-mlflow
+  namespace: ml-team-alpha
+spec:
+  version: "2.11.0"
+
+  tracking:
+    replicas: 2
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+    
+    # Custom MLflow server arguments
+    additionalArgs:
+      - "--default-artifact-root"
+      - "s3://my-mlflow-artifacts"
+      - "--serve-artifacts"
+    
+    # Custom health check probes
+    probes:
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 5000
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 3
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 5000
+        initialDelaySeconds: 10
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 3
+      startupProbe:
+        httpGet:
+          path: /health
+          port: 5000
+        initialDelaySeconds: 0
+        periodSeconds: 10
+        timeoutSeconds: 3
+        failureThreshold: 30
+    
+    # Lifecycle hooks
+    lifecycle:
+      preStop:
+        exec:
+          command: ["/bin/sh", "-c", "sleep 15"]
+      postStart:
+        exec:
+          command: ["/bin/sh", "-c", "echo 'MLflow server started'"]
+    
+    # Init containers for setup tasks
+    initContainers:
+      - name: init-db-check
+        image: postgres:15
+        command: ['sh', '-c', 'until pg_isready -h postgres.ml-team-alpha.svc.cluster.local -p 5432; do echo waiting for database; sleep 2; done']
+    
+    # Sidecar containers for logging/monitoring
+    sidecarContainers:
+      - name: log-collector
+        image: fluent/fluent-bit:2.2
+        volumeMounts:
+          - name: varlog
+            mountPath: /var/log
+            readOnly: true
+    
+    # Custom pod annotations and labels
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "5000"
+    podLabels:
+      environment: production
+      team: ml-team-alpha
+
+  # Backend database configuration
+  backend:
+    type: postgresql
+    postgresql:
+      host: postgres.ml-team-alpha.svc.cluster.local
+      port: 5432
+      database: mlflow
+      credentialsSecret: mlflow-db-credentials
+      sslMode: require
+
+  # Artifact store configuration
+  artifactStore:
+    type: s3
+    s3:
+      bucket: my-mlflow-artifacts
+      region: us-east-1
+      credentialsSecret: aws-artifact-credentials
+      pathPrefix: team-alpha/
+
+  # Ingress configuration
+  ingress:
+    enabled: true
+    host: mlflow.team-alpha.internal
+    ingressClassName: nginx
+    tls:
+      enabled: true
+      issuer: letsencrypt-prod
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+
+  # Horizontal Pod Autoscaler configuration
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  # Pod scheduling configuration
+  scheduling:
+    nodeSelector:
+      nodepool: ml-workload
+    tolerations:
+      - key: "mlflow"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/instance
+                    operator: In
+                    values:
+                      - advanced-mlflow
+              topologyKey: kubernetes.io/hostname
+    priorityClassName: high-priority
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/instance: advanced-mlflow
+
+  # Pod Disruption Budget configuration
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  # ServiceMonitor configuration (requires prometheus-operator)
+  # Uncomment if prometheus-operator is installed in your cluster
+  # serviceMonitor:
+  #   enabled: true
+  #   interval: 30s
+  #   scrapeTimeout: 10s
+  #   labels:
+  #     release: prometheus
+
+  # Database migration configuration
+  migration:
+    enabled: true
+    backoffLimit: 6
+    activeDeadlineSeconds: 600
+    jobAnnotations:
+      argocd.argoproj.io/sync-wave: "1"

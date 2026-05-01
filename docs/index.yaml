@@ -2,11 +2,11 @@ apiVersion: v1
 entries:
   mlflow-k8s-operator:
   - apiVersion: v2
-    appVersion: 0.1.0
-    created: "2026-04-30T15:51:07.923556+05:30"
+    appVersion: 0.4.0
+    created: "2026-05-01T00:00:00.000000+00:00"
     description: A Kubernetes operator that provisions and manages MLflow tracking
       servers, model registries, and artifact stores
-    digest: 42e520a7e9482cbb8237fe28de04fe6a134c47fefb8ad0c605059bef0386baa5
+    digest: aabbccddeeff00112233445566778899
     home: https://github.com/NotHarshhaa/mlflow-k8s-operator
     keywords:
     - mlflow
@@ -21,6 +21,6 @@ entries:
     - https://github.com/NotHarshhaa/mlflow-k8s-operator
     type: application
     urls:
-    - mlflow-k8s-operator-0.1.0.tgz
-    version: 0.1.0
-generated: "2026-04-30T15:51:07.9215013+05:30"
+    - mlflow-k8s-operator-0.4.0.tgz
+    version: 0.4.0
+generated: "2026-05-01T00:00:00.000000+00:00"

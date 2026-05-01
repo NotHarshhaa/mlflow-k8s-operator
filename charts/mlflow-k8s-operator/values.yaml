@@ -7,7 +7,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/NotHarshhaa/mlflow-k8s-operator
   pullPolicy: IfNotPresent
-  tag: "0.1.0"
+  tag: "0.4.0"
 
 imagePullSecrets: []
 nameOverride: ""

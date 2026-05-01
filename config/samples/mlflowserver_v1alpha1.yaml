@@ -36,3 +36,15 @@ spec:
     tls:
       enabled: true
       issuer: letsencrypt-prod
+
+  # Horizontal Pod Autoscaler
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+
+  # Pod Disruption Budget for high availability
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
