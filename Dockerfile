@@ -6,7 +6,6 @@ FROM golang:1.23-alpine as builder
 ARG VERSION=dev
 ARG COMMIT_SHA=unknown
 ARG BUILD_DATE=unknown
-ARG TARGETPLATFORM
 
 WORKDIR /workspace
 
@@ -26,9 +25,12 @@ COPY api/ api/
 COPY controllers/ controllers/
 COPY internal/ internal/
 
-# Build with optimizations
-# TARGETPLATFORM is automatically set by Docker Buildx
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# Build with optimizations:
+# -ldflags="-s -w" strips debug information
+# CGO_ENABLED=0 creates static binary
+# -trimpath removes file system paths from binary
+# -X injects version information
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags="-s -w -X main.Version=${VERSION} -X main.CommitSHA=${COMMIT_SHA} -X main.BuildDate=${BUILD_DATE}" \
     -trimpath \
     -a -o manager main.go
